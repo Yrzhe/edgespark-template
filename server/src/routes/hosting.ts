@@ -14,9 +14,11 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { and, desc, eq, isNull, lt } from "drizzle-orm";
-import { sites, versions } from "@defs";
+import { apiKeys, sites, versions } from "@defs";
 import type { AppEnv } from "../middleware/managementAuth";
 import { httpError } from "../lib/httpErrors";
+import { newId } from "../lib/ids";
+import { generateApiKey } from "../lib/keys";
 import {
   createDeploy,
   createUploadMap,
@@ -35,6 +37,61 @@ type CreateSiteBody = { name: string; slug?: string; spaMode?: boolean };
 type PatchSiteBody = { name?: string; slug?: string; spaMode?: boolean };
 
 export const hostingManageRoutes = new Hono<AppEnv>()
+  .get("/keys", async (c) => {
+    const { db } = await import("edgespark");
+    const rows = await db
+      .select({
+        id: apiKeys.id,
+        name: apiKeys.name,
+        prefix: apiKeys.prefix,
+        createdAt: apiKeys.createdAt,
+        lastUsedAt: apiKeys.lastUsedAt,
+        revokedAt: apiKeys.revokedAt,
+      })
+      .from(apiKeys)
+      .orderBy(desc(apiKeys.createdAt));
+    return c.json({ keys: rows });
+  })
+  .post("/keys", async (c) => {
+    const body = await readJson(c);
+    if (!isRecord(body) || typeof body.name !== "string" || body.name.trim().length === 0 || body.name.trim().length > 80) {
+      return httpError(c, 400, "invalid_request", "name must be a non-empty string up to 80 characters.");
+    }
+
+    const { db } = await import("edgespark");
+    const key = await generateApiKey();
+    const now = Date.now();
+    const [row] = await db
+      .insert(apiKeys)
+      .values({
+        id: newId(),
+        name: body.name.trim(),
+        keyHash: key.hash,
+        prefix: key.prefix,
+        createdAt: now,
+        lastUsedAt: null,
+        revokedAt: null,
+      })
+      .returning({
+        id: apiKeys.id,
+        name: apiKeys.name,
+        prefix: apiKeys.prefix,
+        createdAt: apiKeys.createdAt,
+        lastUsedAt: apiKeys.lastUsedAt,
+        revokedAt: apiKeys.revokedAt,
+      });
+    return c.json({ key: row, plaintext: key.plaintext }, 201);
+  })
+  .delete("/keys/:id", async (c) => {
+    const { db } = await import("edgespark");
+    const [row] = await db
+      .update(apiKeys)
+      .set({ revokedAt: Date.now() })
+      .where(and(eq(apiKeys.id, c.req.param("id")), isNull(apiKeys.revokedAt)))
+      .returning({ id: apiKeys.id });
+    if (!row) return httpError(c, 404, "key_not_found", "API key not found.");
+    return c.json({ revoked: true });
+  })
   .get("/sites", async (c) => {
     const { db } = await import("edgespark");
     const rows = await db.select().from(sites).where(isNull(sites.deletedAt)).orderBy(desc(sites.createdAt));
