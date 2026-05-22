@@ -236,6 +236,9 @@ export const baasRuntimeRoutes = new Hono()
       .where(and(eq(baasFiles.siteId, site.id), eq(baasFiles.id, c.req.param("fileId"))))
       .limit(1);
     if (!file) return forbidden(c);
+    if (!file.collection) return forbidden(c);
+    const collection = await loadCollectionRules(db, site.id, file.collection);
+    if (!collection || !canCreate(collection.write)) return forbidden(c);
     const bucket = storage.from(buckets.baasUploads);
     const meta = await bucket.head(file.r2Key);
     if (!meta) return httpError(c as never, 404, "upload_not_found", "Upload not found.");
@@ -291,7 +294,6 @@ async function runtimeCollection(c: Context, _mode: "read" | "write") {
   const { db } = await import("edgespark");
   const site = await loadActiveSite(db, paramRequired(c, "siteId"));
   if (!site) return { ok: false as const, response: forbidden(c) };
-  c.req.header("X-Site-Key"); // Public attribution only; never authorization.
   const collection = await loadCollectionRules(db, site.id, paramRequired(c, "name"));
   if (!collection) return { ok: false as const, response: forbidden(c) };
   return { ok: true as const, site, collection };

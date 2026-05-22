@@ -60,7 +60,7 @@ export function stringifyRecordData(value: unknown, maxBytes: number): { ok: tru
 
 export async function loadActiveSite(db: EdgeDb, siteId: string) {
   const [site] = await db
-    .select({ id: sites.id, siteKey: sites.siteKey })
+    .select({ id: sites.id })
     .from(sites)
     .where(and(eq(sites.id, siteId), isNull(sites.deletedAt)))
     .limit(1);
