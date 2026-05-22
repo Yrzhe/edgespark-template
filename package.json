@@ -1,4 +1,5 @@
 {
-  "name": "edgespark-template",
-  "private": true
+  "name": "hatch",
+  "private": true,
+  "type": "module"
 }

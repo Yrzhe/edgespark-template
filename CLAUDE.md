@@ -1,6 +1,31 @@
-# edgespark-template
+# Hatch 🐣⚡
 
-Fullstack EdgeSpark project.
+**An AI-agent-native static-site host with a built-in backend**, built on EdgeSpark.
+(EdgeSpark is the platform; the product is **Hatch** — use "Hatch" in all user-facing copy.)
+See `README.md` for the full overview.
+
+## What it does
+- **Hosting**: upload a folder → public URL at `/api/public/s/<slug>/`; immutable
+  content-addressed versions + instant rollback.
+- **BaaS**: per-site collections (D1) + visitor file uploads (R2) with access rules.
+- **Agent-native**: API keys, `scripts/deploy-site.ts` (one-command deploy), and an
+  agent guide at `GET /api/public/llms.txt` (base URL injected from the request origin).
+- **Dashboard** (`web/`): Connect AI · Sites · API Keys · BaaS Data.
+
+## Owner bootstrap (after first deploy)
+1. `edgespark var set OWNER_EMAIL=<you>` and `edgespark secret set MGMT_TOKEN_SECRET` (browser).
+2. `edgespark deploy`, then open the URL and **sign up** with your `OWNER_EMAIL`.
+3. Lock the dashboard: set `disableSignUp: true` in `configs/auth-config.yaml`, then
+   `edgespark auth apply && edgespark deploy`.
+
+## Deploy a site as an agent
+`node scripts/deploy-site.ts <dir> <slug> --base https://<domain> --key esk_...`
+(Node < 22.18: `npx tsx scripts/deploy-site.ts ...`.) Or hand the agent the API key + the
+`/api/public/llms.txt` URL and it will drive the API itself.
+
+## Deploy discipline
+One production environment (no staging). `edgespark deploy` updates it live — run
+`edgespark deploy --dry-run` first. `migrate` runs on the default branch (main).
 
 ## Structure
 
