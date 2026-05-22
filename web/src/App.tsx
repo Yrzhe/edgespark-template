@@ -2,6 +2,7 @@ import { Navigate, RouterProvider, createBrowserRouter } from "react-router-dom"
 
 import { AuthGate } from "@/components/AuthGate";
 import { APIKeys } from "@/components/magicpath/api-keys/APIKeys";
+import { BaaSData } from "@/components/magicpath/baa-s-data/BaaSData";
 import { ConnectAI } from "@/components/magicpath/connect-ai/ConnectAI";
 import { SitesDashboard } from "@/components/magicpath/sites-dashboard/SitesDashboard";
 import { Layout } from "@/layouts/Layout";
@@ -19,21 +20,10 @@ const router = createBrowserRouter([
       { path: "connect", element: <ConnectAI /> },
       { path: "sites", element: <SitesDashboard /> },
       { path: "keys", element: <APIKeys /> },
-      { path: "baas", element: <Placeholder title="BaaS Data" /> },
+      { path: "baas", element: <BaaSData /> },
     ],
   },
 ]);
-
-function Placeholder({ title }: { title: string }) {
-  return (
-    <main className="flex min-w-0 flex-1 flex-col">
-      <header className="border-b border-neutral-200 bg-white px-6 py-4">
-        <h1 className="text-[15px] font-semibold tracking-tight text-neutral-900">{title}</h1>
-        <p className="mt-0.5 text-[13px] text-neutral-500">This page is installed from MagicPath and will be wired after Connect AI.</p>
-      </header>
-    </main>
-  );
-}
 
 function App() {
   return <RouterProvider router={router} />;
