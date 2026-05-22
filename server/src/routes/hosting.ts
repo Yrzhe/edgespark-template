@@ -17,6 +17,14 @@ import { and, desc, eq, isNull } from "drizzle-orm";
 import { sites, versions } from "@defs";
 import type { AppEnv } from "../middleware/managementAuth";
 import { httpError } from "../lib/httpErrors";
+import {
+  createDeploy,
+  createUploadMap,
+  existingHashesForManifest,
+  finalizeDeploy,
+  missingHashesForManifest,
+  normalizeDeployManifest,
+} from "../lib/hosting/deploy";
 import { createSite, findActiveSite, hardDeleteSite, isUniqueConstraintError } from "../lib/hosting/sites";
 
 type CreateSiteBody = { name: string; slug?: string; spaMode?: boolean };
@@ -88,6 +96,46 @@ export const hostingManageRoutes = new Hono<AppEnv>()
       }
       throw error;
     }
+  })
+  .post("/sites/:id/deploys", async (c) => {
+    const body = await readJson(c);
+    if (!isRecord(body)) return httpError(c, 400, "invalid_request", "Request body must be a JSON object.");
+
+    let manifest;
+    try {
+      manifest = normalizeDeployManifest(body.manifest);
+    } catch (error) {
+      return httpError(c, 400, "invalid_manifest", error instanceof Error ? error.message : "Invalid manifest.");
+    }
+    const note = parseDeployNote(body.note);
+    if (note instanceof Error) return httpError(c, 400, "invalid_request", note.message);
+
+    const { db, storage } = await import("edgespark");
+    const site = await findActiveSite(db, c.req.param("id"));
+    if (!site) return httpError(c, 404, "site_not_found", "Site not found.");
+
+    const existingHashes = await existingHashesForManifest(db, manifest);
+    const missingHashes = missingHashesForManifest(manifest, existingHashes);
+    const { deployId } = await createDeploy({ db, siteId: site.id, manifest, note });
+    const uploads = await createUploadMap({ storage, siteId: site.id, manifest, missingHashes });
+    return c.json({ deployId, missingHashes, uploads }, 201);
+  })
+  .post("/sites/:id/deploys/:deployId/finalize", async (c) => {
+    const { db, storage } = await import("edgespark");
+    const result = await finalizeDeploy({
+      db,
+      storage,
+      siteId: c.req.param("id"),
+      deployId: c.req.param("deployId"),
+    });
+    if (result.ok) return c.json({ deployId: result.deployId, status: "ready" });
+    if (result.code === "deploy_conflict") {
+      return httpError(c, 409, "deploy_conflict", "The site changed while this deploy was finalizing.");
+    }
+    if (result.code === "site_not_found") return httpError(c, 404, "site_not_found", "Site not found.");
+    if (result.code === "deploy_not_found") return httpError(c, 404, "deploy_not_found", "Deploy not found.");
+    if (result.code === "size_mismatch") return httpError(c, 400, "size_mismatch", "Uploaded blob size does not match manifest.");
+    return httpError(c, 400, "missing_blob", "One or more required blobs have not been uploaded.");
   })
   .delete("/sites/:id", async (c) => {
     const { db, storage, ctx } = await import("edgespark");
@@ -171,6 +219,14 @@ function parseSiteFields(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseDeployNote(value: unknown): string | undefined | Error {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string" || value.length > 2000) {
+    return new Error("note must be a string up to 2000 characters.");
+  }
+  return value;
 }
 
 function formatSite(row: typeof sites.$inferSelect) {
