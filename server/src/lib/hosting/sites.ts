@@ -118,6 +118,14 @@ export async function findActiveSite(db: EdgeDb, id: string) {
 }
 
 export async function hardDeleteSite(input: { db: EdgeDb; storage: EdgeStorage; siteId: string }): Promise<void> {
+  try {
+    await hardDeleteSiteInner(input);
+  } catch (error) {
+    console.error("hosting hard-delete failed", { siteId: input.siteId, error });
+  }
+}
+
+async function hardDeleteSiteInner(input: { db: EdgeDb; storage: EdgeStorage; siteId: string }): Promise<void> {
   const { db, storage, siteId } = input;
   const { baasCollections, baasFiles, baasRecords, buckets, contentBlobs, files, sites, versions } = await import("@defs");
   const versionRows = await db.select({ id: versions.id }).from(versions).where(eq(versions.siteId, siteId));
@@ -139,7 +147,6 @@ export async function hardDeleteSite(input: { db: EdgeDb; storage: EdgeStorage; 
 
   await runBatches(db, [
     db.delete(contentBlobs).where(like(contentBlobs.r2Key, `${siteId}/%`)),
-    db.delete(sites).where(eq(sites.id, siteId)),
   ]);
 
   const bucket = storage.from(buckets.siteAssets);
@@ -155,6 +162,8 @@ export async function hardDeleteSite(input: { db: EdgeDb; storage: EdgeStorage; 
     cursor = page.cursor;
     if (!page.hasMore) break;
   } while (cursor);
+
+  await runBatches(db, [db.delete(sites).where(eq(sites.id, siteId))]);
 }
 
 function chunks<T>(items: readonly T[], size: number): T[][] {
