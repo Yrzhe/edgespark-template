@@ -13,7 +13,7 @@
  */
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull, lt } from "drizzle-orm";
 import { sites, versions } from "@defs";
 import type { AppEnv } from "../middleware/managementAuth";
 import { httpError } from "../lib/httpErrors";
@@ -171,6 +171,64 @@ export const hostingManageRoutes = new Hono<AppEnv>()
     if (result.code === "deploy_conflict") return httpError(c, 409, "deploy_conflict", "The site changed while this file was being deleted.");
     return httpError(c, 404, result.code, "Site or current version not found.");
   })
+  .get("/sites/:id/versions", async (c) => {
+    const { db } = await import("edgespark");
+    const site = await findActiveSite(db, c.req.param("id"));
+    if (!site) return httpError(c, 404, "site_not_found", "Site not found.");
+
+    const limit = parseLimit(c.req.query("limit"));
+    const before = parseCreatedBefore(c.req.query("before"));
+    if (before instanceof Error) return httpError(c, 400, "invalid_request", before.message);
+    const where = before
+      ? and(eq(versions.siteId, site.id), lt(versions.createdAt, before))
+      : eq(versions.siteId, site.id);
+    const rows = await db
+      .select({
+        id: versions.id,
+        parentVersionId: versions.parentVersionId,
+        status: versions.status,
+        note: versions.note,
+        fileCount: versions.fileCount,
+        totalBytes: versions.totalBytes,
+        createdAt: versions.createdAt,
+        committedAt: versions.committedAt,
+        expiresAt: versions.expiresAt,
+      })
+      .from(versions)
+      .where(where)
+      .orderBy(desc(versions.createdAt))
+      .limit(limit + 1);
+    const page = rows.slice(0, limit);
+    return c.json({
+      versions: page,
+      nextBefore: rows.length > limit ? page[page.length - 1]?.createdAt ?? null : null,
+    });
+  })
+  .post("/sites/:id/rollback", async (c) => {
+    const body = await readJson(c);
+    if (!isRecord(body) || typeof body.versionId !== "string") {
+      return httpError(c, 400, "invalid_request", "versionId is required.");
+    }
+
+    const { db } = await import("edgespark");
+    const site = await findActiveSite(db, c.req.param("id"));
+    if (!site) return httpError(c, 404, "site_not_found", "Site not found.");
+
+    const [target] = await db
+      .select({ id: versions.id })
+      .from(versions)
+      .where(and(eq(versions.id, body.versionId), eq(versions.siteId, site.id), eq(versions.status, "ready")))
+      .limit(1);
+    if (!target) return httpError(c, 404, "version_not_found", "Version not found.");
+
+    const [updated] = await db
+      .update(sites)
+      .set({ currentVersionId: target.id, lockVersion: site.lockVersion + 1, updatedAt: Date.now() })
+      .where(and(eq(sites.id, site.id), eq(sites.lockVersion, site.lockVersion), isNull(sites.deletedAt)))
+      .returning({ id: sites.id });
+    if (!updated) return httpError(c, 409, "rollback_conflict", "The site changed while rollback was being applied.");
+    return c.json({ siteId: site.id, currentVersionId: target.id });
+  })
   .delete("/sites/:id", async (c) => {
     const { db, storage, ctx } = await import("edgespark");
     const now = Date.now();
@@ -261,6 +319,20 @@ function parseDeployNote(value: unknown): string | undefined | Error {
     return new Error("note must be a string up to 2000 characters.");
   }
   return value;
+}
+
+function parseLimit(raw: string | undefined): number {
+  if (!raw) return 50;
+  const n = Number(raw);
+  if (!Number.isSafeInteger(n)) return 50;
+  return Math.max(1, Math.min(n, 100));
+}
+
+function parseCreatedBefore(raw: string | undefined): number | null | Error {
+  if (!raw) return null;
+  const n = Number(raw);
+  if (!Number.isSafeInteger(n) || n < 0) return new Error("before must be a non-negative integer timestamp.");
+  return n;
 }
 
 function formatSite(row: typeof sites.$inferSelect) {
