@@ -1,14 +1,9 @@
 // Typed runtime input keys for app code.
 // VarKey and SecretKey are string literal union types, not values or config storage.
-// Add a key here before using vars.get("KEY") or secret.get("KEY") in code.
-// Values still come from .env.local in local dev and remote vars/secrets in deployed envs.
+// Values come from .env.local in local dev and remote vars/secrets in deployed envs.
 
 export type VarKey =
-  // | "API_BASE_URL"
-  // | "GOOGLE_CLIENT_ID"
-  never;
+  | "OWNER_EMAIL"; // the single owner's login email; gates the management API
 
 export type SecretKey =
-  // | "STRIPE_KEY"
-  // | "GOOGLE_CLIENT_SECRET"
-  never;
+  | "MGMT_TOKEN_SECRET"; // HMAC signing key for short-lived owner management tokens
