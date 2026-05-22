@@ -1,45 +1,46 @@
 /**
- * EDGESPARK SERVER
+ * EdgeSpark Site Host + BaaS — server entry.
  *
- * Define your Hono routes. The app is static — created once, reused across requests.
+ * PATH CONVENTIONS (platform-enforced auth):
+ *   /api/*          → login required (auth.user guaranteed)
+ *   /api/public/*   → login optional (we enforce our own checks)
+ *   /api/webhooks/* → no auth
  *
- * SDK imports from 'edgespark' are per-request (backed by AsyncLocalStorage).
- * They can ONLY be used inside route handlers, not at the top level.
- *
- * ═══════════════════════════════════════════════════════════════════
- * PATH CONVENTIONS (Authentication)
- *
- * /api/*          → Login required (auth.user guaranteed)
- * /api/public/*   → Login optional (auth.user if logged in)
- * /api/webhooks/* → No auth check (handle verification yourself)
- * ═══════════════════════════════════════════════════════════════════
+ * Foundation (Plan 1): /api/me, /api/me/token, and the managementAuth gate.
+ * Plan 2 mounts: /api/public/manage/sites*, /api/public/s/:slug/*
+ * Plan 3 mounts: /api/public/manage/sites/:id/collections*, /api/public/baas/:siteId/*
  */
-
 import { Hono } from "hono";
+import { vars, secret } from "edgespark";
+import { auth } from "edgespark/http";
+import { managementAuth, type AppEnv } from "./middleware/managementAuth";
+import { signMgmtToken } from "./lib/mgmtToken";
+import { httpError } from "./lib/httpErrors";
 
-const app = new Hono()
-  .get("/api/public/hello", (c) =>
-    c.json({ message: "Hello from EdgeSpark! Spark your idea to the Edge." })
-  );
+const app = new Hono<AppEnv>();
 
-// Example: Get all posts
-// .get('/api/posts', async (c) => {
-//   const allPosts = await db.select().from(posts);
-//   return c.json({ posts: allPosts });
-// })
+// Session check (platform guarantees a user under /api/*).
+app.get("/api/me", (c) => {
+  if (!auth.isAuthenticated()) return httpError(c, 401, "unauthorized", "Login required.");
+  return c.json({ email: auth.user.email });
+});
 
-// Example: Create post
-// .post('/api/posts', async (c) => {
-//   const data = await c.req.json();
-//   await db.insert(posts).values({ title: data.title, content: data.content });
-//   return c.json({ success: true }, 201);
-// })
+// Owner mints a short-lived management token; the dashboard holds it in memory and
+// sends it as `Authorization: Bearer` for management mutations.
+app.get("/api/me/token", async (c) => {
+  if (!auth.isAuthenticated()) return httpError(c, 401, "unauthorized", "Login required.");
+  const ownerEmail = vars.get("OWNER_EMAIL");
+  if (!ownerEmail || auth.user.email !== ownerEmail) {
+    return httpError(c, 403, "not_owner", "Only the owner can mint a management token.");
+  }
+  const mgmtSecret = secret.get("MGMT_TOKEN_SECRET") ?? "";
+  if (!mgmtSecret) return httpError(c, 500, "not_configured", "MGMT_TOKEN_SECRET is not set.");
+  const token = await signMgmtToken({ email: ownerEmail }, mgmtSecret, 900);
+  return c.json({ token, expiresInSec: 900 });
+});
 
-// Example: Background task (doesn't block response)
-// .post('/api/analytics', async (c) => {
-//   const event = await c.req.json();
-//   ctx.runInBackground(logEvent(event));
-//   return c.json({ ok: true });
-// })
+// Gate all management routes (Plans 2-3 mount routers under this prefix).
+app.use("/api/public/manage/*", managementAuth);
+app.get("/api/public/manage/_ping", (c) => c.json({ ok: true, principal: c.get("principal") }));
 
 export default app;
