@@ -27,6 +27,7 @@ import {
   normalizeDeployManifest,
   putSingleFile,
 } from "../lib/hosting/deploy";
+import { gcAfterDeploy } from "../lib/hosting/gc";
 import { serveSiteFile } from "../lib/hosting/serve";
 import { createSite, findActiveSite, hardDeleteSite, isUniqueConstraintError } from "../lib/hosting/sites";
 
@@ -124,14 +125,17 @@ export const hostingManageRoutes = new Hono<AppEnv>()
     return c.json({ deployId, missingHashes, uploads }, 201);
   })
   .post("/sites/:id/deploys/:deployId/finalize", async (c) => {
-    const { db, storage } = await import("edgespark");
+    const { db, storage, ctx } = await import("edgespark");
     const result = await finalizeDeploy({
       db,
       storage,
       siteId: c.req.param("id"),
       deployId: c.req.param("deployId"),
     });
-    if (result.ok) return c.json({ deployId: result.deployId, status: "ready" });
+    if (result.ok) {
+      ctx.runInBackground(gcAfterDeploy({ db, storage, siteId: c.req.param("id") }));
+      return c.json({ deployId: result.deployId, status: "ready" });
+    }
     if (result.code === "deploy_conflict") {
       return httpError(c, 409, "deploy_conflict", "The site changed while this deploy was finalizing.");
     }
