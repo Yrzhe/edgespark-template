@@ -16,7 +16,8 @@ import { newId } from "../src/lib/ids";
 const E2E_KEY = "esk_LOCAL_DEV_E2E_KEY_do_not_use_in_prod";
 
 export default defineSeed<SqliteRemoteDatabase<typeof schema>>(async (ctx) => {
-  // Owner account — matches OWNER_EMAIL in .env.local.
+  // Owner account. In local dev the server treats the logged-in user as owner
+  // (ctx.environment === "dev"), so no OWNER_EMAIL var is needed to use the dashboard.
   await ctx.auth.createUser({
     email: "owner@example.com",
     password: "correct-horse-battery-staple",

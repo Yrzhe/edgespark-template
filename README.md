@@ -53,9 +53,14 @@ node scripts/deploy-site.ts ./dist my-site --base https://<your-domain> --key es
 ## Local development
 
 ```bash
-cp server/.env.example server/.env.local   # set OWNER_EMAIL + MGMT_TOKEN_SECRET
-edgespark dev                                # http://localhost:7775
+edgespark dev    # http://localhost:7775
 ```
+
+`edgespark dev` seeds an owner (`owner@example.com` / `correct-horse-battery-staple`)
+and a demo agent API key, then opens the dashboard. In local dev the platform does **not**
+inject `OWNER_EMAIL` / `MGMT_TOKEN_SECRET`, so the server treats the logged-in dev user as
+the owner automatically (this relaxation is gated on `ctx.environment === "dev"` — production
+always requires the real configured owner). See `server/.env.example` for the production keys.
 
 ## Project layout
 

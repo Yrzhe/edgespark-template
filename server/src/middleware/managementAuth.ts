@@ -10,12 +10,13 @@
  * never from request bodies.
  */
 import type { Context, MiddlewareHandler, Next } from "hono";
-import { db, vars, secret } from "edgespark";
+import { db } from "edgespark";
 import { auth } from "edgespark/http";
 import { eq } from "drizzle-orm";
 import { apiKeys } from "@defs";
 import { hashKey } from "../lib/keys";
 import { verifyMgmtToken } from "../lib/mgmtToken";
+import { isOwnerEmail, getMgmtSecret } from "../lib/ownerConfig";
 import { httpError } from "../lib/httpErrors";
 
 export type Principal = { kind: "owner" } | { kind: "agent"; keyId: string };
@@ -27,13 +28,11 @@ export const managementAuth: MiddlewareHandler<AppEnv> = async (c: Context<AppEn
   const authz = c.req.header("Authorization");
   const bearer = authz?.startsWith("Bearer ") ? authz.slice(7) : null;
   const mutating = MUTATIONS.has(c.req.method);
-  const ownerEmail = vars.get("OWNER_EMAIL");
 
   if (bearer) {
     // 1a) owner management token
-    const mgmtSecret = secret.get("MGMT_TOKEN_SECRET") ?? "";
-    const tok = await verifyMgmtToken(bearer, mgmtSecret);
-    if (tok.ok && ownerEmail && tok.payload.email === ownerEmail) {
+    const tok = await verifyMgmtToken(bearer, getMgmtSecret());
+    if (tok.ok && isOwnerEmail(tok.payload.email)) {
       c.set("principal", { kind: "owner" });
       return next();
     }
@@ -48,8 +47,7 @@ export const managementAuth: MiddlewareHandler<AppEnv> = async (c: Context<AppEn
   }
 
   // 2) No bearer: only the owner SESSION, and only for READS.
-  const sessionEmail = auth.user?.email ?? null;
-  const isOwnerSession = !!ownerEmail && sessionEmail === ownerEmail;
+  const isOwnerSession = isOwnerEmail(auth.user?.email ?? null);
   if (isOwnerSession && !mutating) {
     c.set("principal", { kind: "owner" });
     return next();

@@ -11,10 +11,10 @@
  * Plan 3 mounts: /api/public/manage/sites/:id/collections*, /api/public/baas/:siteId/*
  */
 import { Hono } from "hono";
-import { vars, secret } from "edgespark";
 import { auth } from "edgespark/http";
 import { managementAuth, type AppEnv } from "./middleware/managementAuth";
 import { signMgmtToken } from "./lib/mgmtToken";
+import { isOwnerEmail, getMgmtSecret } from "./lib/ownerConfig";
 import { httpError } from "./lib/httpErrors";
 import { hostingManageRoutes, hostingPublicRoutes, serveRoutes } from "./routes/hosting";
 import { baasManageRoutes, baasRuntimeRoutes } from "./routes/baas";
@@ -31,13 +31,13 @@ app.get("/api/me", (c) => {
 // sends it as `Authorization: Bearer` for management mutations.
 app.get("/api/me/token", async (c) => {
   if (!auth.isAuthenticated()) return httpError(c, 401, "unauthorized", "Login required.");
-  const ownerEmail = vars.get("OWNER_EMAIL");
-  if (!ownerEmail || auth.user.email !== ownerEmail) {
+  const email = auth.user.email;
+  if (!email || !isOwnerEmail(email)) {
     return httpError(c, 403, "not_owner", "Only the owner can mint a management token.");
   }
-  const mgmtSecret = secret.get("MGMT_TOKEN_SECRET") ?? "";
+  const mgmtSecret = getMgmtSecret();
   if (!mgmtSecret) return httpError(c, 500, "not_configured", "MGMT_TOKEN_SECRET is not set.");
-  const token = await signMgmtToken({ email: ownerEmail }, mgmtSecret, 900);
+  const token = await signMgmtToken({ email }, mgmtSecret, 900);
   return c.json({ token, expiresInSec: 900 });
 });
 
