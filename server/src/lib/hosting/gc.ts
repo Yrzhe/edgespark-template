@@ -5,6 +5,7 @@ type EdgeStorage = typeof import("edgespark").storage;
 type BatchStatement = Parameters<EdgeDb["batch"]>[0][number];
 
 export const RETAINED_VERSIONS = 10;
+const GC_STATEMENT_CHUNK = 80;
 
 export async function gcAfterDeploy(input: { db: EdgeDb; storage: EdgeStorage; siteId: string }): Promise<void> {
   const { buckets, contentBlobs, files, versions } = await import("@defs");
@@ -24,7 +25,7 @@ export async function gcAfterDeploy(input: { db: EdgeDb; storage: EdgeStorage; s
   const oldVersionIds = ready.slice(RETAINED_VERSIONS).map((version) => version.id);
   if (oldVersionIds.length === 0) return;
 
-  for (const versionIds of chunks(oldVersionIds, 90)) {
+  for (const versionIds of chunks(oldVersionIds, GC_STATEMENT_CHUNK)) {
     const fileRows = await db
       .select({ hash: files.hash })
       .from(files)
@@ -35,18 +36,21 @@ export async function gcAfterDeploy(input: { db: EdgeDb; storage: EdgeStorage; s
       refDeltas.set(row.hash, (refDeltas.get(row.hash) ?? 0) + 1);
     }
 
-    const statements: BatchStatement[] = [];
-    for (const [hash, count] of refDeltas) {
-      statements.push(
-        db
-          .update(contentBlobs)
-          .set({ refCount: sql`${contentBlobs.refCount} - ${count}` })
-          .where(eq(contentBlobs.hash, hash))
+    for (const refChunk of chunks([...refDeltas.entries()], GC_STATEMENT_CHUNK)) {
+      await runBatch(
+        db,
+        refChunk.map(([hash, count]) =>
+          db
+            .update(contentBlobs)
+            .set({ refCount: sql`${contentBlobs.refCount} - ${count}` })
+            .where(eq(contentBlobs.hash, hash))
+        )
       );
     }
-    statements.push(db.delete(files).where(inArray(files.versionId, versionIds)));
-    statements.push(db.delete(versions).where(inArray(versions.id, versionIds)));
-    await runBatch(db, statements);
+    await runBatch(db, [
+      db.delete(files).where(inArray(files.versionId, versionIds)),
+      db.delete(versions).where(inArray(versions.id, versionIds)),
+    ]);
   }
 
   const dead = await db
@@ -55,14 +59,17 @@ export async function gcAfterDeploy(input: { db: EdgeDb; storage: EdgeStorage; s
     .where(and(like(contentBlobs.r2Key, `${siteId}/%`), lte(contentBlobs.refCount, 0)));
   const bucket = storage.from(buckets.siteAssets);
 
-  for (const group of chunks(dead, 90)) {
-    const fresh = await db
-      .select({ hash: contentBlobs.hash, r2Key: contentBlobs.r2Key })
-      .from(contentBlobs)
-      .where(and(inArray(contentBlobs.hash, group.map((row) => row.hash)), lte(contentBlobs.refCount, 0)));
-    if (fresh.length === 0) continue;
-    await bucket.delete(fresh.map((row) => row.r2Key));
-    await db.delete(contentBlobs).where(inArray(contentBlobs.hash, fresh.map((row) => row.hash)));
+  for (const group of chunks(dead, GC_STATEMENT_CHUNK)) {
+    const removed = await db
+      .delete(contentBlobs)
+      .where(and(inArray(contentBlobs.hash, group.map((row) => row.hash)), lte(contentBlobs.refCount, 0)))
+      .returning({ r2Key: contentBlobs.r2Key });
+    if (removed.length === 0) continue;
+
+    // If this R2 delete fails after the registry delete commits, the object is
+    // orphaned but unreachable; later site hard-delete/list-prefix cleanup can
+    // still remove it.
+    await bucket.delete(removed.map((row) => row.r2Key));
   }
 }
 
@@ -74,5 +81,6 @@ function chunks<T>(items: readonly T[], size: number): T[][] {
 
 async function runBatch(db: EdgeDb, statements: BatchStatement[]): Promise<void> {
   if (statements.length === 0) return;
+  if (statements.length > 100) throw new Error("gc batch exceeds D1 batch statement limit");
   await db.batch(statements as [BatchStatement, ...BatchStatement[]]);
 }
