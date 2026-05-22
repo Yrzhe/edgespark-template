@@ -200,6 +200,7 @@ export async function finalizeDeploy(input: { db: EdgeDb; storage: EdgeStorage; 
   ]);
   const updated = results[1] as { id: string }[];
   if (updated.length === 0) {
+    await rollbackBlobRefCounts(db, counts);
     await db.update(versions).set({ status: "failed" }).where(eq(versions.id, deployId));
     return { ok: false as const, status: 409, code: "deploy_conflict" };
   }
@@ -356,6 +357,24 @@ function chunks<T>(items: readonly T[], size: number): T[][] {
 async function runBatch(db: EdgeDb, statements: BatchStatement[]): Promise<void> {
   if (statements.length === 0) return;
   await db.batch(statements as [BatchStatement, ...BatchStatement[]]);
+}
+
+async function rollbackBlobRefCounts(
+  db: EdgeDb,
+  counts: ReadonlyMap<string, { count: number }>
+): Promise<void> {
+  const { contentBlobs } = await import("@defs");
+  for (const chunk of chunks([...counts.entries()], 90)) {
+    await runBatch(
+      db,
+      chunk.map(([hash, item]) =>
+        db
+          .update(contentBlobs)
+          .set({ refCount: sql`${contentBlobs.refCount} - ${item.count}` })
+          .where(eq(contentBlobs.hash, hash))
+      )
+    );
+  }
 }
 
 async function sha256Hex(body: ArrayBuffer): Promise<string> {
