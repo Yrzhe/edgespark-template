@@ -16,6 +16,8 @@ import { auth } from "edgespark/http";
 import { managementAuth, type AppEnv } from "./middleware/managementAuth";
 import { signMgmtToken } from "./lib/mgmtToken";
 import { httpError } from "./lib/httpErrors";
+import { hostingManageRoutes, serveRoutes } from "./routes/hosting";
+import { baasManageRoutes, baasRuntimeRoutes } from "./routes/baas";
 
 const app = new Hono<AppEnv>();
 
@@ -39,8 +41,14 @@ app.get("/api/me/token", async (c) => {
   return c.json({ token, expiresInSec: 900 });
 });
 
-// Gate all management routes (Plans 2-3 mount routers under this prefix).
+// Gate all management routes (the mounted routers below inherit this middleware).
 app.use("/api/public/manage/*", managementAuth);
 app.get("/api/public/manage/_ping", (c) => c.json({ ok: true, principal: c.get("principal") }));
+
+// Lane mounts (stubs today; filled by Plan 2 / Plan 3).
+app.route("/api/public/manage", hostingManageRoutes); // sites, deploys, files, versions, keys
+app.route("/api/public/manage", baasManageRoutes); // collections + records admin
+app.route("/api/public/s", serveRoutes); // PUBLIC static serving
+app.route("/api/public/baas", baasRuntimeRoutes); // PUBLIC BaaS runtime
 
 export default app;
