@@ -15,8 +15,6 @@ function toHex(bytes: Uint8Array): string {
 export function getClientIp(headers: Headers): string {
   const cf = headers.get("CF-Connecting-IP");
   if (cf?.trim()) return cf.trim();
-  const forwarded = headers.get("X-Forwarded-For");
-  if (forwarded?.trim()) return forwarded.split(",")[0].trim();
   return "unknown";
 }
 

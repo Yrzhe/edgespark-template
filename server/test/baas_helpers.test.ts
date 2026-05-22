@@ -25,9 +25,9 @@ describe("baas record helpers", () => {
 });
 
 describe("baas rate limit helpers", () => {
-  it("extracts client IP using Cloudflare then forwarded headers", () => {
+  it("extracts client IP from Cloudflare headers only", () => {
     expect(getClientIp(new Headers({ "CF-Connecting-IP": "203.0.113.1" }))).toBe("203.0.113.1");
-    expect(getClientIp(new Headers({ "X-Forwarded-For": "198.51.100.1, 198.51.100.2" }))).toBe("198.51.100.1");
+    expect(getClientIp(new Headers({ "X-Forwarded-For": "198.51.100.1, 198.51.100.2" }))).toBe("unknown");
     expect(getClientIp(new Headers())).toBe("unknown");
   });
 
