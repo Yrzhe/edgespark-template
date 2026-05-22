@@ -1,6 +1,8 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { normalizeSitePath } from "../pathNormalize";
+import { contentTypeFor } from "../contentType";
 import { newId } from "../ids";
+import { TOMBSTONE_HASH } from "./serve";
 
 type EdgeDb = typeof import("edgespark").db;
 type EdgeStorage = typeof import("edgespark").storage;
@@ -21,6 +23,7 @@ type RawManifestEntry = {
 };
 
 const BUILD_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_SINGLE_FILE_BYTES = 5 * 1024 * 1024;
 const HASH_RE = /^[a-f0-9]{64}$/;
 
 export function normalizeDeployManifest(raw: unknown): DeployManifestEntry[] {
@@ -204,6 +207,122 @@ export async function finalizeDeploy(input: { db: EdgeDb; storage: EdgeStorage; 
   return { ok: true as const, deployId };
 }
 
+export async function putSingleFile(input: {
+  db: EdgeDb;
+  storage: EdgeStorage;
+  siteId: string;
+  rawPath: string;
+  body: ArrayBuffer;
+  contentType?: string;
+}) {
+  if (input.body.byteLength > MAX_SINGLE_FILE_BYTES) {
+    return { ok: false as const, status: 413, code: "file_too_large" };
+  }
+  const path = normalizeSitePath(input.rawPath);
+  const hash = await sha256Hex(input.body);
+  const contentType = input.contentType || contentTypeFor(path);
+  const { buckets } = await import("@defs");
+  await input.storage.from(buckets.siteAssets).put(`${input.siteId}/${hash}`, input.body, { contentType });
+  return createDeltaVersion({
+    db: input.db,
+    siteId: input.siteId,
+    path,
+    hash,
+    contentType,
+    size: input.body.byteLength,
+  });
+}
+
+export async function deleteSingleFile(input: { db: EdgeDb; siteId: string; rawPath: string }) {
+  return createDeltaVersion({
+    db: input.db,
+    siteId: input.siteId,
+    path: normalizeSitePath(input.rawPath),
+    hash: TOMBSTONE_HASH,
+    contentType: "application/x-deleted",
+    size: 0,
+  });
+}
+
+async function createDeltaVersion(input: {
+  db: EdgeDb;
+  siteId: string;
+  path: string;
+  hash: string;
+  contentType: string;
+  size: number;
+}) {
+  const { contentBlobs, files, sites, versions } = await import("@defs");
+  const [site] = await input.db
+    .select()
+    .from(sites)
+    .where(and(eq(sites.id, input.siteId), sql`${sites.deletedAt} is null`))
+    .limit(1);
+  if (!site) return { ok: false as const, status: 404, code: "site_not_found" };
+  if (!site.currentVersionId) return { ok: false as const, status: 404, code: "version_not_found" };
+
+  const now = Date.now();
+  const versionId = newId();
+  const statements: BatchStatement[] = [
+    input.db.insert(versions).values({
+      id: versionId,
+      siteId: input.siteId,
+      parentVersionId: site.currentVersionId,
+      status: "ready",
+      note: null,
+      fileCount: 1,
+      totalBytes: input.size,
+      createdAt: now,
+      committedAt: now,
+      expiresAt: null,
+    }),
+    input.db.insert(files).values({
+      id: newId(),
+      versionId,
+      path: input.path,
+      hash: input.hash,
+      contentType: input.contentType,
+      size: input.size,
+    }),
+  ];
+
+  // Deletions are represented as a file-row tombstone so resolution can stop at
+  // the nearest delta without cloning the full manifest.
+  if (input.hash !== TOMBSTONE_HASH) {
+    statements.push(
+      input.db
+        .insert(contentBlobs)
+        .values({
+          hash: input.hash,
+          r2Key: `${input.siteId}/${input.hash}`,
+          refCount: 1,
+          firstUploadedAt: now,
+          lastVerifiedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: contentBlobs.hash,
+          set: {
+            refCount: sql`${contentBlobs.refCount} + 1`,
+            lastVerifiedAt: now,
+          },
+        })
+    );
+  }
+
+  const results = await input.db.batch([
+    ...statements,
+    input.db
+      .update(sites)
+      .set({ currentVersionId: versionId, lockVersion: site.lockVersion + 1, updatedAt: now })
+      .where(and(eq(sites.id, input.siteId), eq(sites.lockVersion, site.lockVersion), sql`${sites.deletedAt} is null`))
+      .returning({ id: sites.id }),
+  ] as unknown as [BatchStatement, ...BatchStatement[]]);
+  const updated = results[results.length - 1] as { id: string }[];
+  if (updated.length === 0) return { ok: false as const, status: 409, code: "deploy_conflict" };
+
+  return { ok: true as const, versionId, path: input.path, hash: input.hash };
+}
+
 function normalizeDeployManifestEntry(entry: RawManifestEntry): DeployManifestEntry {
   if (typeof entry.path !== "string") throw new Error("manifest path must be a string");
   if (typeof entry.hash !== "string" || !HASH_RE.test(entry.hash)) {
@@ -237,4 +356,9 @@ function chunks<T>(items: readonly T[], size: number): T[][] {
 async function runBatch(db: EdgeDb, statements: BatchStatement[]): Promise<void> {
   if (statements.length === 0) return;
   await db.batch(statements as [BatchStatement, ...BatchStatement[]]);
+}
+
+async function sha256Hex(body: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", body);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }

@@ -20,10 +20,12 @@ import { httpError } from "../lib/httpErrors";
 import {
   createDeploy,
   createUploadMap,
+  deleteSingleFile,
   existingHashesForManifest,
   finalizeDeploy,
   missingHashesForManifest,
   normalizeDeployManifest,
+  putSingleFile,
 } from "../lib/hosting/deploy";
 import { createSite, findActiveSite, hardDeleteSite, isUniqueConstraintError } from "../lib/hosting/sites";
 
@@ -136,6 +138,38 @@ export const hostingManageRoutes = new Hono<AppEnv>()
     if (result.code === "deploy_not_found") return httpError(c, 404, "deploy_not_found", "Deploy not found.");
     if (result.code === "size_mismatch") return httpError(c, 400, "size_mismatch", "Uploaded blob size does not match manifest.");
     return httpError(c, 400, "missing_blob", "One or more required blobs have not been uploaded.");
+  })
+  .put("/sites/:id/files/*", async (c) => {
+    const { db, storage } = await import("edgespark");
+    let result;
+    try {
+      result = await putSingleFile({
+        db,
+        storage,
+        siteId: c.req.param("id"),
+        rawPath: c.req.param("*") ?? "",
+        body: await c.req.arrayBuffer(),
+        contentType: c.req.header("content-type") ?? undefined,
+      });
+    } catch {
+      return httpError(c, 400, "invalid_path", "Invalid file path.");
+    }
+    if (result.ok) return c.json({ versionId: result.versionId, path: result.path, hash: result.hash });
+    if (result.code === "file_too_large") return httpError(c, 413, "file_too_large", "File is too large.");
+    if (result.code === "deploy_conflict") return httpError(c, 409, "deploy_conflict", "The site changed while this file was being updated.");
+    return httpError(c, 404, result.code, "Site or current version not found.");
+  })
+  .delete("/sites/:id/files/*", async (c) => {
+    const { db } = await import("edgespark");
+    let result;
+    try {
+      result = await deleteSingleFile({ db, siteId: c.req.param("id"), rawPath: c.req.param("*") ?? "" });
+    } catch {
+      return httpError(c, 400, "invalid_path", "Invalid file path.");
+    }
+    if (result.ok) return c.json({ versionId: result.versionId, path: result.path });
+    if (result.code === "deploy_conflict") return httpError(c, 409, "deploy_conflict", "The site changed while this file was being deleted.");
+    return httpError(c, 404, result.code, "Site or current version not found.");
   })
   .delete("/sites/:id", async (c) => {
     const { db, storage, ctx } = await import("edgespark");
