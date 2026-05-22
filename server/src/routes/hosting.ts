@@ -30,6 +30,7 @@ import {
   putSingleFile,
 } from "../lib/hosting/deploy";
 import { gcAfterDeploy } from "../lib/hosting/gc";
+import { buildLlmsTxt } from "../lib/hosting/llms";
 import { rawServePathFromUrl, serveSiteFile } from "../lib/hosting/serve";
 import { createSite, findActiveSite, hardDeleteSite, isUniqueConstraintError } from "../lib/hosting/sites";
 
@@ -316,6 +317,20 @@ export const serveRoutes = new Hono()
     const rawPath = rawServePathFromUrl(c.req.url, slug);
     return serveSiteFile({ db, storage, request: c.req.raw, slug, rawPath });
   });
+
+export const hostingPublicRoutes = new Hono()
+  .get("/llms.txt", (c) => agentDocsResponse(c.req.url))
+  .get("/agent.md", (c) => agentDocsResponse(c.req.url));
+
+function agentDocsResponse(requestUrl: string): Response {
+  const origin = new URL(requestUrl).origin;
+  return new Response(buildLlmsTxt(origin), {
+    headers: {
+      "Content-Type": "text/plain;charset=utf-8",
+      "Cache-Control": "public, max-age=300",
+    },
+  });
+}
 
 async function readJson(c: Context): Promise<unknown> {
   try {
