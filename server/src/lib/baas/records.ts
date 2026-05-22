@@ -54,7 +54,7 @@ export function isJsonObject(value: unknown): value is Record<string, unknown> {
 export function stringifyRecordData(value: unknown, maxBytes: number): { ok: true; json: string } | { ok: false } {
   if (!isJsonObject(value)) return { ok: false };
   const json = JSON.stringify(value);
-  if (json.length > maxBytes) return { ok: false };
+  if (new TextEncoder().encode(json).length > maxBytes) return { ok: false };
   return { ok: true, json };
 }
 

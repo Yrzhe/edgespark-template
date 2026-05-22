@@ -21,6 +21,7 @@ describe("baas record helpers", () => {
     expect(stringifyRecordData({ ok: true }, 20)).toEqual({ ok: true, json: "{\"ok\":true}" });
     expect(stringifyRecordData(["no"], 100)).toEqual({ ok: false });
     expect(stringifyRecordData({ value: "abcdef" }, 10)).toEqual({ ok: false });
+    expect(stringifyRecordData({ value: "你好" }, "{\"value\":\"你好\"}".length)).toEqual({ ok: false });
   });
 });
 
