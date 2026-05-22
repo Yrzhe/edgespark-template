@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { TOMBSTONE_HASH, resolveVersionPath } from "../src/lib/hosting/serve";
+import { TOMBSTONE_HASH, headersForServedPath, resolveVersionPath } from "../src/lib/hosting/serve";
 
 describe("hosting delta resolution", () => {
   const versions = [
@@ -32,5 +32,16 @@ describe("hosting delta resolution", () => {
     ];
 
     expect(resolveVersionPath({ versions, files, currentVersionId: "v2", path: "/index.html" })).toBeNull();
+  });
+
+  it("sets security and cache headers for served files", () => {
+    const html = headersForServedPath("/index.html");
+    expect(html.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(html.get("Content-Security-Policy")).toContain("object-src 'none'");
+    expect(html.get("Cache-Control")).toBe("public, max-age=60");
+
+    const svg = headersForServedPath("/icon.svg");
+    expect(svg.get("Content-Disposition")).toBe("attachment");
+    expect(svg.get("Cache-Control")).toBe("public, max-age=31536000, immutable");
   });
 });

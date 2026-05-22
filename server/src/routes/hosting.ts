@@ -27,6 +27,7 @@ import {
   normalizeDeployManifest,
   putSingleFile,
 } from "../lib/hosting/deploy";
+import { serveSiteFile } from "../lib/hosting/serve";
 import { createSite, findActiveSite, hardDeleteSite, isUniqueConstraintError } from "../lib/hosting/sites";
 
 type CreateSiteBody = { name: string; slug?: string; spaMode?: boolean };
@@ -243,9 +244,15 @@ export const hostingManageRoutes = new Hono<AppEnv>()
     return c.json({ accepted: true }, 202);
   });
 
-export const serveRoutes = new Hono().get("/*", (c) =>
-  c.json({ error: { code: "not_implemented", message: "serve route pending (Plan 2)", requestId: crypto.randomUUID() } }, 501)
-);
+export const serveRoutes = new Hono()
+  .get("/:slug", async (c) => {
+    const { db, storage } = await import("edgespark");
+    return serveSiteFile({ db, storage, request: c.req.raw, slug: c.req.param("slug"), rawPath: "" });
+  })
+  .get("/:slug/*", async (c) => {
+    const { db, storage } = await import("edgespark");
+    return serveSiteFile({ db, storage, request: c.req.raw, slug: c.req.param("slug"), rawPath: c.req.param("*") ?? "" });
+  });
 
 async function readJson(c: Context): Promise<unknown> {
   try {
