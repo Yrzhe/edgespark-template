@@ -1,6 +1,6 @@
 export function buildLlmsTxt(origin: string): string {
   const baseUrl = normalizeOrigin(origin);
-  return `# EdgeSpark Site Host Agent Guide
+  return `# Hatch — Agent Guide
 
 Base URL: ${baseUrl}
 

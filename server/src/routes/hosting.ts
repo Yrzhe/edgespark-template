@@ -319,11 +319,16 @@ export const serveRoutes = new Hono()
   });
 
 export const hostingPublicRoutes = new Hono()
-  .get("/llms.txt", (c) => agentDocsResponse(c.req.url))
-  .get("/agent.md", (c) => agentDocsResponse(c.req.url));
+  .get("/llms.txt", (c) => agentDocsResponse(publicOrigin(c)))
+  .get("/agent.md", (c) => agentDocsResponse(publicOrigin(c)));
 
-function agentDocsResponse(requestUrl: string): Response {
-  const origin = new URL(requestUrl).origin;
+function publicOrigin(c: Context): string {
+  const proto = c.req.header("x-forwarded-proto") ?? "https";
+  const host = c.req.header("x-forwarded-host") ?? c.req.header("host");
+  return host ? `${proto}://${host}` : new URL(c.req.url).origin;
+}
+
+function agentDocsResponse(origin: string): Response {
   return new Response(buildLlmsTxt(origin), {
     headers: {
       "Content-Type": "text/plain;charset=utf-8",
