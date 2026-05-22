@@ -1,38 +1,40 @@
-/**
- * App.tsx — Main application component.
- *
- * This is the entry point for your web UI. Replace the placeholder
- * below with your own components and pages.
- *
- * Stack: React 19, TypeScript, Tailwind CSS v4, Vite
- *
- * Getting started:
- * - EdgeSpark client is ready at src/lib/edgespark.ts (auth + API)
- * - Add components in src/components/
- * - Add pages in src/pages/
- * - Add routing with react-router-dom
- * - Tailwind CSS is ready — use utility classes directly
- */
+import { Navigate, RouterProvider, createBrowserRouter } from "react-router-dom";
 
-import logo from '/logo-edgespark.svg'
+import { AuthGate } from "@/components/AuthGate";
+import { ConnectAI } from "@/components/magicpath/connect-ai/ConnectAI";
+import { Layout } from "@/layouts/Layout";
 
-function App() {
-  // TODO: Replace this placeholder with your application UI
+const router = createBrowserRouter([
+  {
+    path: "/",
+    element: (
+      <AuthGate>
+        {(session) => <Layout user={session.user} />}
+      </AuthGate>
+    ),
+    children: [
+      { index: true, element: <Navigate to="/connect" replace /> },
+      { path: "connect", element: <ConnectAI /> },
+      { path: "sites", element: <Placeholder title="Sites" /> },
+      { path: "keys", element: <Placeholder title="API Keys" /> },
+      { path: "baas", element: <Placeholder title="BaaS Data" /> },
+    ],
+  },
+]);
+
+function Placeholder({ title }: { title: string }) {
   return (
-    <main className="min-h-screen flex items-center justify-center bg-neutral-950">
-      <div className="text-center max-w-2xl mx-auto px-6 py-8">
-        <img src={logo} alt="EdgeSpark" className="w-48 sm:w-64 lg:w-80 mx-auto mb-8" />
-
-        <h1 className="text-white font-normal leading-tight text-4xl sm:text-5xl lg:text-6xl mb-4">
-          EdgeSpark App
-        </h1>
-
-        <p className="text-neutral-400 font-normal leading-relaxed text-base sm:text-lg lg:text-xl max-w-xl mx-auto">
-          Every Spark Ships.
-        </p>
-      </div>
+    <main className="flex min-w-0 flex-1 flex-col">
+      <header className="border-b border-neutral-200 bg-white px-6 py-4">
+        <h1 className="text-[15px] font-semibold tracking-tight text-neutral-900">{title}</h1>
+        <p className="mt-0.5 text-[13px] text-neutral-500">This page is installed from MagicPath and will be wired after Connect AI.</p>
+      </header>
     </main>
-  )
+  );
 }
 
-export default App
+function App() {
+  return <RouterProvider router={router} />;
+}
+
+export default App;
