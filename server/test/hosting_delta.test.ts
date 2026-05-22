@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { TOMBSTONE_HASH, headersForServedPath, rawServePathFromUrl, resolveVersionPath } from "../src/lib/hosting/serve";
+import { TOMBSTONE_HASH, cacheKeyForVersion, headersForServedPath, rawServePathFromUrl, resolveVersionPath } from "../src/lib/hosting/serve";
 
 describe("hosting delta resolution", () => {
   const versions = [
@@ -49,5 +49,11 @@ describe("hosting delta resolution", () => {
     expect(rawServePathFromUrl("http://localhost:7777/api/public/s/demo/style.css", "demo")).toBe("style.css");
     expect(rawServePathFromUrl("http://localhost:7777/api/public/s/demo/assets/app.js?x=1", "demo")).toBe("assets/app.js");
     expect(rawServePathFromUrl("http://localhost:7777/api/public/s/demo", "demo")).toBe("");
+  });
+
+  it("keys the serve cache by current version", () => {
+    const request = new Request("https://example.test/api/public/s/demo/index.html?ignored=1");
+    expect(cacheKeyForVersion(request, "v1").url).toBe("https://example.test/api/public/s/demo/index.html?__v=v1");
+    expect(cacheKeyForVersion(request, "v2").url).toBe("https://example.test/api/public/s/demo/index.html?__v=v2");
   });
 });

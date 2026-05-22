@@ -54,10 +54,6 @@ export async function serveSiteFile(input: {
   slug: string;
   rawPath: string;
 }): Promise<Response> {
-  const cache = (globalThis as unknown as { caches?: { default: CacheLike } }).caches?.default;
-  const cached = await cache?.match(input.request);
-  if (cached) return cached;
-
   const { buckets, files, sites, versions } = await import("@defs");
   const [site] = await input.db
     .select()
@@ -65,6 +61,11 @@ export async function serveSiteFile(input: {
     .where(and(eq(sites.slug, input.slug), isNull(sites.deletedAt)))
     .limit(1);
   if (!site || !site.currentVersionId) return notFound();
+
+  const cache = (globalThis as unknown as { caches?: { default: CacheLike } }).caches?.default;
+  const cacheKey = cacheKeyForVersion(input.request, site.currentVersionId);
+  const cached = await cache?.match(cacheKey);
+  if (cached) return cached;
 
   let path: string;
   try {
@@ -95,8 +96,13 @@ export async function serveSiteFile(input: {
 
   const headers = headersForServedPath(servedPath);
   const response = new Response(obj.body, { headers });
-  await cache?.put(input.request, response.clone());
+  await cache?.put(cacheKey, response.clone());
   return response;
+}
+
+export function cacheKeyForVersion(request: Request, versionId: string): Request {
+  const url = new URL(request.url);
+  return new Request(`${url.origin}${url.pathname}?__v=${encodeURIComponent(versionId)}`);
 }
 
 export function headersForServedPath(path: string): Headers {
