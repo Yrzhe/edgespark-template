@@ -30,7 +30,7 @@ import {
   putSingleFile,
 } from "../lib/hosting/deploy";
 import { gcAfterDeploy } from "../lib/hosting/gc";
-import { serveSiteFile } from "../lib/hosting/serve";
+import { rawServePathFromUrl, serveSiteFile } from "../lib/hosting/serve";
 import { createSite, findActiveSite, hardDeleteSite, isUniqueConstraintError } from "../lib/hosting/sites";
 
 type CreateSiteBody = { name: string; slug?: string; spaMode?: boolean };
@@ -312,7 +312,9 @@ export const serveRoutes = new Hono()
   })
   .get("/:slug/*", async (c) => {
     const { db, storage } = await import("edgespark");
-    return serveSiteFile({ db, storage, request: c.req.raw, slug: c.req.param("slug"), rawPath: c.req.param("*") ?? "" });
+    const slug = c.req.param("slug");
+    const rawPath = rawServePathFromUrl(c.req.url, slug);
+    return serveSiteFile({ db, storage, request: c.req.raw, slug, rawPath });
   });
 
 async function readJson(c: Context): Promise<unknown> {

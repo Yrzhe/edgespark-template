@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { TOMBSTONE_HASH, headersForServedPath, resolveVersionPath } from "../src/lib/hosting/serve";
+import { TOMBSTONE_HASH, headersForServedPath, rawServePathFromUrl, resolveVersionPath } from "../src/lib/hosting/serve";
 
 describe("hosting delta resolution", () => {
   const versions = [
@@ -43,5 +43,11 @@ describe("hosting delta resolution", () => {
     const svg = headersForServedPath("/icon.svg");
     expect(svg.get("Content-Disposition")).toBe("attachment");
     expect(svg.get("Cache-Control")).toBe("public, max-age=31536000, immutable");
+  });
+
+  it("extracts hosted file paths from the request URL instead of Hono splat params", () => {
+    expect(rawServePathFromUrl("http://localhost:7777/api/public/s/demo/style.css", "demo")).toBe("style.css");
+    expect(rawServePathFromUrl("http://localhost:7777/api/public/s/demo/assets/app.js?x=1", "demo")).toBe("assets/app.js");
+    expect(rawServePathFromUrl("http://localhost:7777/api/public/s/demo", "demo")).toBe("");
   });
 });

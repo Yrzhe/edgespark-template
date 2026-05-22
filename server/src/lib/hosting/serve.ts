@@ -118,6 +118,12 @@ export function headersForServedPath(path: string): Headers {
   return headers;
 }
 
+export function rawServePathFromUrl(url: string, slug: string): string {
+  const prefix = `/api/public/s/${slug}/`;
+  const pathname = new URL(url).pathname;
+  return pathname.startsWith(prefix) ? pathname.slice(prefix.length) : "";
+}
+
 function notFound(): Response {
   return new Response("Not found", {
     status: 404,
