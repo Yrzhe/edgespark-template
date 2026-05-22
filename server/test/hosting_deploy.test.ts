@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { hostingBlobKey } from "../src/lib/hosting/blobKeys";
 import { missingHashesForManifest, normalizeDeployManifest } from "../src/lib/hosting/deploy";
 
 describe("hosting deploy helpers", () => {
@@ -20,5 +21,11 @@ describe("hosting deploy helpers", () => {
         { path: "/", hash: "b".repeat(64), size: 1, contentType: "text/html" },
       ])
     ).toThrow(/duplicate path/i);
+  });
+
+  it("uses global content-addressed R2 keys", () => {
+    const hash = "a".repeat(64);
+    expect(hostingBlobKey(hash)).toBe(hash);
+    expect(hostingBlobKey(hash)).not.toContain("/");
   });
 });

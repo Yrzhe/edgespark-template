@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, like, lt, lte, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, lte, sql } from "drizzle-orm";
 
 type EdgeDb = typeof import("edgespark").db;
 type EdgeStorage = typeof import("edgespark").storage;
@@ -56,7 +56,7 @@ export async function gcAfterDeploy(input: { db: EdgeDb; storage: EdgeStorage; s
   const dead = await db
     .select({ hash: contentBlobs.hash, r2Key: contentBlobs.r2Key, refCount: contentBlobs.refCount })
     .from(contentBlobs)
-    .where(and(like(contentBlobs.r2Key, `${siteId}/%`), lte(contentBlobs.refCount, 0)));
+    .where(lte(contentBlobs.refCount, 0));
   const bucket = storage.from(buckets.siteAssets);
 
   for (const group of chunks(dead, GC_STATEMENT_CHUNK)) {

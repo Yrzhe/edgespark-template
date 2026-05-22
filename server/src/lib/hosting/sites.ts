@@ -1,5 +1,6 @@
-import { and, eq, inArray, isNull, like } from "drizzle-orm";
+import { and, eq, inArray, isNull, lte, sql } from "drizzle-orm";
 import { newId } from "../ids";
+import { TOMBSTONE_HASH } from "./serve";
 
 type EdgeDb = typeof import("edgespark").db;
 type EdgeStorage = typeof import("edgespark").storage;
@@ -130,6 +131,15 @@ async function hardDeleteSiteInner(input: { db: EdgeDb; storage: EdgeStorage; si
   const { baasCollections, baasFiles, baasRecords, buckets, contentBlobs, files, sites, versions } = await import("@defs");
   const versionRows = await db.select({ id: versions.id }).from(versions).where(eq(versions.siteId, siteId));
   const versionIds = versionRows.map((row) => row.id);
+  const refDeltas = new Map<string, number>();
+
+  for (const ids of chunks(versionIds, 90)) {
+    const fileRows = await db.select({ hash: files.hash }).from(files).where(inArray(files.versionId, ids));
+    for (const row of fileRows) {
+      if (row.hash === TOMBSTONE_HASH) continue;
+      refDeltas.set(row.hash, (refDeltas.get(row.hash) ?? 0) + 1);
+    }
+  }
 
   await runBatches(db, [
     db.update(sites).set({ currentVersionId: null }).where(eq(sites.id, siteId)),
@@ -138,6 +148,18 @@ async function hardDeleteSiteInner(input: { db: EdgeDb; storage: EdgeStorage; si
     db.delete(baasCollections).where(eq(baasCollections.siteId, siteId)),
   ]);
 
+  for (const refs of chunks([...refDeltas.entries()], 90)) {
+    await runBatches(
+      db,
+      refs.map(([hash, count]) =>
+        db
+          .update(contentBlobs)
+          .set({ refCount: sql`${contentBlobs.refCount} - ${count}` })
+          .where(eq(contentBlobs.hash, hash))
+      )
+    );
+  }
+
   for (const ids of chunks(versionIds, 90)) {
     await runBatches(db, [
       db.delete(files).where(inArray(files.versionId, ids)),
@@ -145,23 +167,14 @@ async function hardDeleteSiteInner(input: { db: EdgeDb; storage: EdgeStorage; si
     ]);
   }
 
-  await runBatches(db, [
-    db.delete(contentBlobs).where(like(contentBlobs.r2Key, `${siteId}/%`)),
-  ]);
-
   const bucket = storage.from(buckets.siteAssets);
-  let cursor: string | undefined;
-  do {
-    const page = await bucket.list({ prefix: `${siteId}/`, limit: 1000, cursor });
-    for (const paths of chunks(
-      page.files.map((file) => file.path),
-      100
-    )) {
-      await bucket.delete(paths);
-    }
-    cursor = page.cursor;
-    if (!page.hasMore) break;
-  } while (cursor);
+  for (const hashes of chunks([...refDeltas.keys()], 90)) {
+    const removed = await db
+      .delete(contentBlobs)
+      .where(and(inArray(contentBlobs.hash, hashes), lte(contentBlobs.refCount, 0)))
+      .returning({ r2Key: contentBlobs.r2Key });
+    if (removed.length > 0) await bucket.delete(removed.map((row) => row.r2Key));
+  }
 
   await runBatches(db, [db.delete(sites).where(eq(sites.id, siteId))]);
 }

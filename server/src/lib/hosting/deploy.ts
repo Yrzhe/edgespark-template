@@ -2,6 +2,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { normalizeSitePath } from "../pathNormalize";
 import { contentTypeFor } from "../contentType";
 import { newId } from "../ids";
+import { hostingBlobKey } from "./blobKeys";
 import { TOMBSTONE_HASH } from "./serve";
 
 type EdgeDb = typeof import("edgespark").db;
@@ -122,7 +123,7 @@ export async function createUploadMap(input: {
     input.missingHashes.map(async (hash) => {
       const entry = byHash.get(hash);
       if (!entry) throw new Error(`manifest hash not found: ${hash}`);
-      const upload = await bucket.createPresignedPutUrl(`${input.siteId}/${hash}`, 900, {
+      const upload = await bucket.createPresignedPutUrl(hostingBlobKey(hash), 900, {
         contentType: entry.contentType,
       });
       return [hash, { uploadUrl: upload.uploadUrl, requiredHeaders: upload.requiredHeaders }] as const;
@@ -153,7 +154,7 @@ export async function finalizeDeploy(input: { db: EdgeDb; storage: EdgeStorage; 
   const counts = new Map<string, { count: number; r2Key: string; size: number }>();
 
   for (const entry of manifest) {
-    const r2Key = `${siteId}/${entry.hash}`;
+    const r2Key = hostingBlobKey(entry.hash);
     const head = await bucket.head(r2Key);
     if (!head) return { ok: false as const, status: 400, code: "missing_blob", path: entry.path };
     if (head.size !== entry.size) return { ok: false as const, status: 400, code: "size_mismatch", path: entry.path };
@@ -223,7 +224,7 @@ export async function putSingleFile(input: {
   const hash = await sha256Hex(input.body);
   const contentType = input.contentType || contentTypeFor(path);
   const { buckets } = await import("@defs");
-  await input.storage.from(buckets.siteAssets).put(`${input.siteId}/${hash}`, input.body, { contentType });
+  await input.storage.from(buckets.siteAssets).put(hostingBlobKey(hash), input.body, { contentType });
   return createDeltaVersion({
     db: input.db,
     siteId: input.siteId,
@@ -295,7 +296,7 @@ async function createDeltaVersion(input: {
         .insert(contentBlobs)
         .values({
           hash: input.hash,
-          r2Key: `${input.siteId}/${input.hash}`,
+          r2Key: hostingBlobKey(input.hash),
           refCount: 1,
           firstUploadedAt: now,
           lastVerifiedAt: now,

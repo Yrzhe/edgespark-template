@@ -3,6 +3,7 @@ export const TOMBSTONE_HASH = "\0deleted";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { contentTypeFor, isInlineSafe } from "../contentType";
 import { normalizeSitePath } from "../pathNormalize";
+import { hostingBlobKey } from "./blobKeys";
 
 type EdgeDb = typeof import("edgespark").db;
 type EdgeStorage = typeof import("edgespark").storage;
@@ -91,7 +92,7 @@ export async function serveSiteFile(input: {
   }
   if (!resolved) return notFound();
 
-  const obj = await input.storage.from(buckets.siteAssets).get(`${site.id}/${resolved.hash}`);
+  const obj = await input.storage.from(buckets.siteAssets).get(hostingBlobKey(resolved.hash));
   if (!obj) return notFound();
 
   const headers = headersForServedPath(servedPath);
