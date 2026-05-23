@@ -5,6 +5,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); this project is 
 
 ## [Unreleased]
 
+### Fixed
+- **Critical — hosting was 100% broken in production.** The serve path used the Cloudflare
+  `caches.default` API, which the EdgeSpark managed Worker is not permitted to access and
+  throws on — so every hosted page returned HTTP 500 in production (local Miniflare allowed
+  it, so tests passed). Cache access is now best-effort with graceful degradation: serving
+  stays correct whether or not an edge cache is available (`server/src/lib/hosting/serve.ts`).
+- **Critical — single-file edit/delete always hit `/index.html`.** The
+  `PUT`/`DELETE /sites/:id/files/*` routes read Hono's wildcard param, which returns
+  `undefined` in the production runtime → the path normalized to `/index.html`, so every
+  edit silently overwrote (and every delete removed) the wrong file. The path is now
+  derived from the request URL via the site-scoped `/files/` marker
+  (`rawFilePathFromUrl`), with a regression test.
+
+### Changed
+- Agent guide (`/api/public/llms.txt`) now prominently documents that hosted sites must use
+  **relative** URLs (not root-absolute `/style.css`), since sites are served under the
+  `/api/public/s/<slug>/` sub-path.
+
 ### Added
 - Local-dev owner fallback: `edgespark dev` now works with zero configuration. When
   `ctx.environment === "dev"` and `OWNER_EMAIL` isn't injected, the logged-in user is

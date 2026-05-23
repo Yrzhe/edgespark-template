@@ -45,7 +45,21 @@ Or deploy a directory with:
 node scripts/deploy-site.ts <dir> <slug> --key <key>
 \`\`\`
 
+## Important: use RELATIVE URLs in your site
+
+Sites are served under a sub-path: \`${baseUrl}/api/public/s/<slug>/\`. Because of this,
+links and asset references inside your HTML/CSS **must be relative**, not root-absolute:
+
+- ✅ \`<link href="style.css">\`, \`<a href="about.html">\`, \`<img src="img/logo.png">\`
+- ❌ \`<link href="/style.css">\`, \`<a href="/about.html">\` — a leading \`/\` resolves to the
+  domain root, NOT your site, so it will 404 / load the wrong file.
+
+For links from a nested page back up, use relative hops (e.g. \`../\`). Build tools should set
+their base/public path to \`./\` (Vite: \`base: './'\`).
+
 ## Edit One File
+
+Replaces the bytes at \`<path>\`; creates a new immutable version (roll back anytime).
 
 \`\`\`http
 PUT ${baseUrl}/api/public/manage/sites/:id/files/<path>

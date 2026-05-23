@@ -28,6 +28,7 @@ import {
   missingHashesForManifest,
   normalizeDeployManifest,
   putSingleFile,
+  rawFilePathFromUrl,
 } from "../lib/hosting/deploy";
 import { gcAfterDeploy } from "../lib/hosting/gc";
 import { buildLlmsTxt } from "../lib/hosting/llms";
@@ -210,7 +211,7 @@ export const hostingManageRoutes = new Hono<AppEnv>()
         db,
         storage,
         siteId: c.req.param("id"),
-        rawPath: c.req.param("*") ?? "",
+        rawPath: rawFilePathFromUrl(c.req.url, c.req.param("id")),
         body: await c.req.arrayBuffer(),
         contentType: c.req.header("content-type") ?? undefined,
       });
@@ -226,7 +227,7 @@ export const hostingManageRoutes = new Hono<AppEnv>()
     const { db } = await import("edgespark");
     let result;
     try {
-      result = await deleteSingleFile({ db, siteId: c.req.param("id"), rawPath: c.req.param("*") ?? "" });
+      result = await deleteSingleFile({ db, siteId: c.req.param("id"), rawPath: rawFilePathFromUrl(c.req.url, c.req.param("id")) });
     } catch {
       return httpError(c, 400, "invalid_path", "Invalid file path.");
     }

@@ -63,9 +63,12 @@ export async function serveSiteFile(input: {
     .limit(1);
   if (!site || !site.currentVersionId) return notFound();
 
-  const cache = (globalThis as unknown as { caches?: { default: CacheLike } }).caches?.default;
+  // The edge cache is a best-effort accelerator. Some runtimes (e.g. EdgeSpark's
+  // managed Workers) don't permit the default cache and THROW on access/use, so every
+  // cache interaction is guarded — serving must stay correct even when caching is off.
+  const cache = getDefaultCache();
   const cacheKey = cacheKeyForVersion(input.request, site.currentVersionId);
-  const cached = await cache?.match(cacheKey);
+  const cached = await cacheMatch(cache, cacheKey);
   if (cached) return cached;
 
   let path: string;
@@ -97,8 +100,35 @@ export async function serveSiteFile(input: {
 
   const headers = headersForServedPath(servedPath);
   const response = new Response(obj.body, { headers });
-  await cache?.put(cacheKey, response.clone());
+  await cachePut(cache, cacheKey, response);
   return response;
+}
+
+/** Access the default edge cache, returning null if the runtime forbids it. */
+function getDefaultCache(): CacheLike | null {
+  try {
+    return (globalThis as unknown as { caches?: { default?: CacheLike } }).caches?.default ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function cacheMatch(cache: CacheLike | null, key: Request): Promise<Response | undefined> {
+  if (!cache) return undefined;
+  try {
+    return await cache.match(key);
+  } catch {
+    return undefined;
+  }
+}
+
+async function cachePut(cache: CacheLike | null, key: Request, response: Response): Promise<void> {
+  if (!cache) return;
+  try {
+    await cache.put(key, response.clone());
+  } catch {
+    // Cache unavailable in this runtime — serve uncached.
+  }
 }
 
 export function cacheKeyForVersion(request: Request, versionId: string): Request {

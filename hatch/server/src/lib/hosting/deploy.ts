@@ -209,6 +209,19 @@ export async function finalizeDeploy(input: { db: EdgeDb; storage: EdgeStorage; 
   return { ok: true as const, deployId };
 }
 
+/**
+ * Extract the raw site path from a file-management URL. Hono's wildcard param
+ * (`c.req.param("*")`) is unreliable for `/sites/:id/files/*` in this runtime and returns
+ * undefined — which normalizes to "/index.html" and silently rewrites the wrong file — so
+ * we slice the path after the unique, site-scoped `/sites/<id>/files/` marker instead.
+ */
+export function rawFilePathFromUrl(url: string, siteId: string): string {
+  const pathname = new URL(url).pathname;
+  const marker = `/sites/${siteId}/files/`;
+  const i = pathname.indexOf(marker);
+  return i === -1 ? "" : pathname.slice(i + marker.length);
+}
+
 export async function putSingleFile(input: {
   db: EdgeDb;
   storage: EdgeStorage;
