@@ -13,7 +13,7 @@
  */
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { and, desc, eq, isNull, lt } from "drizzle-orm";
+import { and, asc, count, desc, eq, isNull, lt } from "drizzle-orm";
 import { apiKeys, sites, versions } from "@defs";
 import type { AppEnv } from "../middleware/managementAuth";
 import { httpError } from "../lib/httpErrors";
@@ -96,8 +96,23 @@ export const hostingManageRoutes = new Hono<AppEnv>()
   })
   .get("/sites", async (c) => {
     const { db } = await import("edgespark");
-    const rows = await db.select().from(sites).where(isNull(sites.deletedAt)).orderBy(desc(sites.createdAt));
-    return c.json({ sites: rows.map(formatSite) });
+    const { limit, offset } = parsePage(c.req.query("limit"), c.req.query("offset"));
+    const sortColumn = SITE_SORT[c.req.query("sort") ?? ""] ?? sites.updatedAt;
+    const direction = c.req.query("order") === "asc" ? asc : desc;
+
+    const [{ value: total } = { value: 0 }] = await db
+      .select({ value: count() })
+      .from(sites)
+      .where(isNull(sites.deletedAt));
+    const rows = await db
+      .select()
+      .from(sites)
+      .where(isNull(sites.deletedAt))
+      // id as a stable tiebreaker keeps paging deterministic when sort values tie
+      .orderBy(direction(sortColumn), direction(sites.id))
+      .limit(limit)
+      .offset(offset);
+    return c.json({ sites: rows.map(formatSite), total, limit, offset });
   })
   .post("/sites", async (c) => {
     const body = await readJson(c);
@@ -417,6 +432,21 @@ function parseLimit(raw: string | undefined): number {
   const n = Number(raw);
   if (!Number.isSafeInteger(n)) return 50;
   return Math.max(1, Math.min(n, 100));
+}
+
+// Allowed sort columns for the sites table (whitelist — never sort by raw user input).
+const SITE_SORT: Record<string, typeof sites.updatedAt | typeof sites.createdAt | typeof sites.name> = {
+  updatedAt: sites.updatedAt,
+  createdAt: sites.createdAt,
+  name: sites.name,
+};
+
+function parsePage(rawLimit: string | undefined, rawOffset: string | undefined): { limit: number; offset: number } {
+  const l = Number(rawLimit);
+  const limit = rawLimit && Number.isSafeInteger(l) ? Math.max(1, Math.min(l, 100)) : 20;
+  const o = Number(rawOffset);
+  const offset = rawOffset && Number.isSafeInteger(o) && o > 0 ? o : 0;
+  return { limit, offset };
 }
 
 function parseCreatedBefore(raw: string | undefined): number | null | Error {

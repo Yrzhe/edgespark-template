@@ -78,13 +78,24 @@ POST ${baseUrl}/api/public/manage/sites/:id/rollback
 
 ## BaaS Records
 
-Runtime records are site-scoped:
+A collection's records are site-scoped by \`:siteId\` (from the create-site response). The
+request body **is** the record — send your fields directly, with no wrapper. Submitting to a
+\`public-append\` / \`public\` collection needs no auth (it's the hosted page's visitors):
 
 \`\`\`http
 POST ${baseUrl}/api/public/baas/:siteId/collections/<name>/records
 
-{"siteKey":"<siteKey>","data":{"message":"hello"}}
+{"email":"a@b.com","message":"hello"}
 \`\`\`
+
+Read records when \`read\` is \`public\`:
+
+\`\`\`http
+GET ${baseUrl}/api/public/baas/:siteId/collections/<name>/records
+\`\`\`
+
+For a \`private\` collection, only the owner can read — via the management API with a Bearer key:
+\`GET ${baseUrl}/api/public/manage/sites/:id/collections/<name>/records\`.
 
 Collections use a rule model: \`read\` is \`public\` or \`private\`; \`write\` is \`public-append\`, \`public\`, or \`private\`. Public-append allows creating records but not reading, updating, or deleting them.
 `;
