@@ -52,7 +52,7 @@ For a link thumbnail:
 \`\`\`http
 POST ${baseUrl}/api/public/manage/pages/:pageId/links/:linkId/assets/presign
 
-{"filename":"thumb.jpg","contentType":"image/jpeg"}
+{"kind":"thumbnail","filename":"thumb.jpg","contentType":"image/jpeg"}
 \`\`\`
 
 2. PUT the file to \`uploadUrl\` with every returned \`requiredHeaders\`.

@@ -16,6 +16,7 @@ describe("Perch llms.txt builder", () => {
     expect(doc).toContain("POST https://perch.example/api/public/manage/pages");
     expect(doc).toContain("POST https://perch.example/api/public/manage/pages/:pageId/links");
     expect(doc).toContain("POST https://perch.example/api/public/manage/pages/:pageId/assets/presign");
+    expect(doc).toContain('{"kind":"thumbnail","filename":"thumb.jpg","contentType":"image/jpeg"}');
     expect(doc).toContain("GET https://perch.example/api/public/manage/pages/:pageId/analytics");
     expect(doc).toContain("DELETE https://perch.example/api/public/manage/keys/:id");
     expect(doc).not.toContain("localhost");

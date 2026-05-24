@@ -136,10 +136,15 @@ export function renderPublicPage(
       text-decoration: none; transition: border-color .18s ease, transform .18s ease;
     }
     .featured:hover { transform: translateY(-2px); border-color: var(--fg); }
-    .motif { position: relative; height: 112px; overflow: hidden; border-bottom: 1px solid var(--soft); background: var(--subtle); }
+    .motif, .featured-cover { position: relative; height: 112px; overflow: hidden; border-bottom: 1px solid var(--soft); background: var(--subtle); }
     .motif::before {
       content: ""; position: absolute; inset: 0; opacity: .5;
       background-image: repeating-linear-gradient(135deg, #e4e4e7 0 1px, transparent 1px 13px);
+    }
+    .featured-cover img { width: 100%; height: 100%; display: block; object-fit: cover; }
+    .featured-cover::after {
+      content: ""; position: absolute; inset: 0;
+      background: linear-gradient(180deg, rgba(0,0,0,.08), rgba(0,0,0,.16));
     }
     .eyebrow {
       position: absolute; left: 16px; top: 16px; border: 1px solid #d4d4d8; border-radius: 999px;
@@ -156,6 +161,11 @@ export function renderPublicPage(
       background: #fff; padding: 13px 14px; text-decoration: none; transition: border-color .18s ease, transform .18s ease;
     }
     .row:hover { transform: translateY(-2px); border-color: var(--fg); }
+    .row-thumb {
+      width: 42px; height: 42px; flex: 0 0 42px; overflow: hidden; border: 1px solid var(--soft); border-radius: 12px;
+      display: grid; place-items: center; background: var(--subtle); color: #71717a; font-size: 13px; font-weight: 650;
+    }
+    .row-thumb img { width: 100%; height: 100%; display: block; object-fit: cover; }
     .row-main { min-width: 0; flex: 1; }
     .row-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); font-size: 15px; font-weight: 550; }
     .row-desc { display: block; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 13px; }
@@ -186,8 +196,8 @@ export function renderPublicPage(
           ${page.bio ? `<p class="bio">${escapeHtml(page.bio)}</p>` : ""}
           ${renderSocials(socialLinks)}
         </section>
-        ${featured ? `${sectionHeader("Featured")}${renderFeatured(featured, page.slug)}` : ""}
-        ${normalLinks.length > 0 ? `${sectionHeader("Links")}${renderLinkList(normalLinks, page.slug)}` : ""}
+        ${featured ? `${sectionHeader("Featured")}${renderFeatured(featured, page.slug, thumbnailUrlFor(featured, imageUrls))}` : ""}
+        ${normalLinks.length > 0 ? `${sectionHeader("Links")}${renderLinkList(normalLinks, page.slug, imageUrls)}` : ""}
         ${renderFooter()}
       </main>
     </div>
@@ -210,9 +220,11 @@ function renderSocials(socialLinks: readonly SocialLink[]): string {
     .join("")}</nav>`;
 }
 
-function renderFeatured(link: PublicLink, pageSlug: string): string {
+function renderFeatured(link: PublicLink, pageSlug: string, thumbnailUrl: string | null): string {
   return `<a class="featured" href="${clickHref(link, pageSlug)}">
-    <div class="motif"><span class="eyebrow">Featured</span></div>
+    ${thumbnailUrl
+      ? `<div class="featured-cover"><img src="${escapeAttr(thumbnailUrl)}" alt="" loading="lazy" decoding="async"><span class="eyebrow">Featured</span></div>`
+      : `<div class="motif"><span class="eyebrow">Featured</span></div>`}
     <div class="featured-body">
       <h2 class="featured-title">${escapeHtml(link.title)}</h2>
       ${link.description ? `<p class="featured-desc">${escapeHtml(link.description)}</p>` : ""}
@@ -221,7 +233,7 @@ function renderFeatured(link: PublicLink, pageSlug: string): string {
   </a>`;
 }
 
-function renderLinkList(links: readonly PublicLink[], pageSlug: string): string {
+function renderLinkList(links: readonly PublicLink[], pageSlug: string, imageUrls: PublicImageUrls): string {
   const parts: string[] = [];
   let rows: string[] = [];
   const flushRows = () => {
@@ -236,18 +248,31 @@ function renderLinkList(links: readonly PublicLink[], pageSlug: string): string 
       flushRows();
       parts.push(`<h2 class="subsection">${escapeHtml(link.title)}</h2>`);
     } else {
-      rows.push(renderLink(link, pageSlug));
+      rows.push(renderLink(link, pageSlug, thumbnailUrlFor(link, imageUrls)));
     }
   }
   flushRows();
   return parts.join("\n");
 }
 
-function renderLink(link: PublicLink, pageSlug: string): string {
+function renderLink(link: PublicLink, pageSlug: string, thumbnailUrl: string | null): string {
   return `<a class="row" href="${clickHref(link, pageSlug)}">
+    ${renderLinkThumbnail(link, thumbnailUrl)}
     <span class="row-main"><span class="row-title">${escapeHtml(link.title)}</span>${link.description ? `<span class="row-desc">${escapeHtml(link.description)}</span>` : ""}</span>
     ${arrowUpRightIcon()}
   </a>`;
+}
+
+function renderLinkThumbnail(link: PublicLink, thumbnailUrl: string | null): string {
+  if (thumbnailUrl) {
+    return `<span class="row-thumb"><img src="${escapeAttr(thumbnailUrl)}" alt="" loading="lazy" decoding="async"></span>`;
+  }
+  return `<span class="row-thumb" aria-hidden="true">${escapeHtml(initialsFor(link.title))}</span>`;
+}
+
+function thumbnailUrlFor(link: PublicLink, imageUrls: PublicImageUrls): string | null {
+  if (!link.thumbnailS3Uri) return null;
+  return imageUrls.thumbnails?.[link.id] ?? null;
 }
 
 function renderFooter(): string {

@@ -135,6 +135,24 @@ describe("public page SSR renderer", () => {
     expect(html).toContain('href="https://x.com/yrzhe_top"');
     expect(html).toContain("@yrzhe_top");
   });
+
+  it("renders featured and normal link thumbnail images when thumbnailS3Uri has a presigned URL", () => {
+    const html = renderPublicPage(
+      page,
+      [
+        link({ id: "featured", title: "Featured Post", thumbnailS3Uri: "s3://perch-media/featured.jpg", isFeatured: 1, position: 0 }),
+        link({ id: "standard", title: "Newsletter", thumbnailS3Uri: "s3://perch-media/thumb.jpg", position: 1 }),
+        link({ id: "fallback", title: "No Thumb", position: 2 }),
+      ],
+      theme,
+      { thumbnails: { featured: "https://r2.example/featured.jpg?sig=1&x=<bad>", standard: "https://r2.example/thumb.jpg?sig=2" } }
+    );
+
+    expect(html).toContain('class="featured-cover"><img src="https://r2.example/featured.jpg?sig=1&amp;x=&lt;bad&gt;"');
+    expect(html).toContain('<span class="row-thumb"><img src="https://r2.example/thumb.jpg?sig=2"');
+    expect(html).toContain('<span class="row-thumb" aria-hidden="true">NT</span>');
+    expect(html).not.toContain('<div class="motif"><span class="eyebrow">Featured</span></div>');
+  });
 });
 
 function link(overrides: Partial<ReturnType<typeof baseLink>>) {
