@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Perch">
+  <rect width="64" height="64" rx="16" fill="#0a0a0a"/>
+  <!-- a small bird perched on the right end of the perch -->
+  <circle cx="44" cy="40.2" r="3.1" fill="#ffffff"/>
+  <!-- the perch -->
+  <rect x="17" y="43.5" width="30" height="3.4" rx="1.7" fill="#ffffff"/>
+  <!-- P monogram -->
+  <text x="31" y="25" font-family="Inter, Helvetica, Arial, sans-serif" font-size="33" font-weight="800" fill="#ffffff" text-anchor="middle" dominant-baseline="central">P</text>
+</svg>
