@@ -3,6 +3,22 @@
 **An AI-agent-native link-in-bio with built-in analytics**, built on [EdgeSpark](https://edgespark.dev).
 Perch your links in one place — and let your AI agent build and manage the page for you.
 
+## What it looks like
+
+The server-rendered public page (minimal-mono theme):
+
+<p align="center">
+  <img src="docs/screenshots/public-mobile.png" width="330" alt="Perch public link page" />
+</p>
+
+The dashboard — Pages · the link editor with live preview · analytics · theming:
+
+| Pages | Link editor (live preview) |
+|---|---|
+| ![Pages](docs/screenshots/dashboard-pages.png) | ![Editor](docs/screenshots/dashboard-editor.png) |
+| **Analytics** | **Appearance** |
+| ![Analytics](docs/screenshots/dashboard-analytics.png) | ![Appearance](docs/screenshots/dashboard-appearance.png) |
+
 ## What it does
 
 - **Multiple link pages** per owner — each with its own slug, profile, theme, links, and analytics.
