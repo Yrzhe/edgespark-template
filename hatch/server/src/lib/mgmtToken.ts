@@ -48,9 +48,10 @@ export async function signMgmtToken(
 
 export async function verifyMgmtToken(
   token: string,
-  secret: string,
+  secret: string | null | undefined,
   nowSec = Math.floor(Date.now() / 1000)
 ): Promise<{ ok: true; payload: MgmtPayload } | { ok: false }> {
+  if (!secret) return { ok: false };
   const dot = token.indexOf(".");
   if (dot < 0) return { ok: false };
   const body = token.slice(0, dot);

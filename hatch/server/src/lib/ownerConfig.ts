@@ -30,8 +30,8 @@ export function getOwnerEmail(): string | null {
 }
 
 /** Effective HMAC secret for signing/verifying owner tokens (dev fallback only in dev). */
-export function getMgmtSecret(): string {
-  return secret.get("MGMT_TOKEN_SECRET") ?? (isDevEnv() ? DEV_MGMT_SECRET : "");
+export function getMgmtSecret(): string | null {
+  return secret.get("MGMT_TOKEN_SECRET") ?? (isDevEnv() ? DEV_MGMT_SECRET : null);
 }
 
 /**

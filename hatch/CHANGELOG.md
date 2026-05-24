@@ -53,6 +53,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); this project is 
   example produced polluted records. The guide now shows the correct flat-body format.
 
 ### Security
+- Management-token verification now rejects missing or empty HMAC secrets before checking
+  signatures, preventing misconfigured production from accepting tokens forged with an
+  empty-string secret. The dev-only fallback remains gated on `ctx.environment === "dev"`.
 - The dev owner fallback is fail-secure: it is gated strictly on the dev environment, never
   on "config missing". A misconfigured production (no `OWNER_EMAIL`) locks the dashboard
   rather than granting owner access to any logged-in user. Production behavior is unchanged
