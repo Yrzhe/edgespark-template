@@ -1,5 +1,9 @@
 # EdgeSpark Templates
 
+<p align="center">
+  <img src="docs/banner.png" alt="EdgeSpark Templates — Hatch &amp; Perch" />
+</p>
+
 A collection of one-command, AI-agent-native templates for [EdgeSpark](https://edgespark.dev).
 Each lives in its own subdirectory and is initialized directly from GitHub:
 
