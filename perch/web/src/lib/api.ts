@@ -13,6 +13,8 @@ import type {
   LinkAssetKind,
   LinkListResponse,
   LinkResponse,
+  MeResponse,
+  OwnerAvatarPresignResponse,
   PageAnalytics,
   PageAssetKind,
   PageListResponse,
@@ -96,6 +98,19 @@ export async function publicApi<T>(path: string, init: RequestInit = {}): Promis
 }
 
 export const perchApi = {
+  me: {
+    get: () => appApi<MeResponse>("/api/me"),
+    presignAvatar: (contentType: string) =>
+      appApi<OwnerAvatarPresignResponse>("/api/me/avatar/presign", {
+        method: "POST",
+        json: { contentType },
+      }),
+    confirmAvatar: (key: string) =>
+      appApi<{ avatarS3Uri: string }>("/api/me/avatar/confirm", {
+        method: "POST",
+        json: { key },
+      }),
+  },
   pages: {
     list: () => manage<PageListResponse>("/pages"),
     get: (pageId: string) => manage<PageResponse>(`/pages/${encodeURIComponent(pageId)}`),
@@ -161,6 +176,21 @@ export const perchApi = {
     delete: (id: string) => manage<{ revoked: true }>(`/keys/${encodeURIComponent(id)}`, { method: "DELETE" }),
   },
 };
+
+async function appApi<T>(path: string, init: RequestInit & { json?: JsonBody } = {}): Promise<T> {
+  const headers = new Headers(init.headers);
+  if (init.json !== undefined && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  const res = await client.api.fetch(path, {
+    ...init,
+    headers,
+    body: init.json !== undefined ? JSON.stringify(init.json) : init.body,
+  });
+  if (!res.ok) throw await toApiError(res, "Request failed.");
+  if (res.status === 204) return undefined as T;
+  return (await res.json()) as T;
+}
 
 function queryString(query: AnalyticsQuery): string {
   const params = new URLSearchParams();

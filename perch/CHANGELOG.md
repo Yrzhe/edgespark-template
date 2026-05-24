@@ -20,6 +20,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); this project is 
   Analytics) · Connect AI · API Keys; account menu (display name / avatar / change password /
   logout).
 - **Theming**: color / button style / font / avatar / cover, with a live phone preview.
+- **Owner avatar file upload** — account menu uploads an image via presigned R2 PUT
+  (`owner_settings` table); `GET /api/me` returns a fresh presigned avatar URL.
 - One R2 bucket (`perch-media`) for avatars, covers, and thumbnails via presigned PUT/GET.
 - Perch branding (tab title + favicon).
 

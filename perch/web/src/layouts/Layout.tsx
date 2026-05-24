@@ -1,10 +1,10 @@
 import { Camera, KeyRound, LayoutGrid, LockKeyhole, LogOut, Sparkles, UserRound } from "lucide-react";
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import type { AuthUser } from "@edgespark/web";
 
 import { Field, MonoModal, inputClass } from "@/components/MonoModal";
-import { clearManagementToken } from "@/lib/api";
+import { clearManagementToken, perchApi } from "@/lib/api";
 import { client } from "@/lib/edgespark";
 
 const nav = [
@@ -18,7 +18,22 @@ export function Layout({ user }: { user: AuthUser }) {
   const [modal, setModal] = useState<"password" | "name" | "avatar" | null>(null);
   const [displayName, setDisplayName] = useState(user.name || "Owner");
   const [avatarUrl, setAvatarUrl] = useState(user.image ?? "");
+  const [accountError, setAccountError] = useState<string | null>(null);
   const initials = initialsFor(displayName);
+
+  useEffect(() => {
+    let cancelled = false;
+    perchApi.me.get()
+      .then((me) => {
+        if (!cancelled) setAvatarUrl(me.avatarUrl ?? "");
+      })
+      .catch((err) => {
+        if (!cancelled) setAccountError(err instanceof Error ? err.message : "Failed to load account avatar.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function signOut() {
     clearManagementToken();
@@ -66,6 +81,7 @@ export function Layout({ user }: { user: AuthUser }) {
             <span className="block truncate text-[11px] text-zinc-400">Owner</span>
           </span>
           </button>
+          {accountError && <p className="mt-2 px-2 text-[11px] text-rose-600">{accountError}</p>}
           {menuOpen && (
             <div className="absolute bottom-full left-0 z-20 mb-2 w-full rounded-xl border border-zinc-200 bg-white p-1.5 shadow-xl">
               <MenuButton icon={<LockKeyhole className="h-4 w-4" />} label="Change password" onClick={() => { setModal("password"); setMenuOpen(false); }} />
@@ -92,12 +108,13 @@ export function Layout({ user }: { user: AuthUser }) {
       )}
       {modal === "avatar" && (
         <AvatarModal
-          initialImage={avatarUrl}
           onClose={() => setModal(null)}
           onSaved={(image) => {
-            setAvatarUrl(image);
+            setAvatarUrl(image ?? "");
+            setAccountError(null);
             setModal(null);
           }}
+          onError={setAccountError}
         />
       )}
     </div>
@@ -176,18 +193,45 @@ function NameModal({ initialName, onClose, onSaved }: { initialName: string; onC
   );
 }
 
-function AvatarModal({ initialImage, onClose, onSaved }: { initialImage: string; onClose: () => void; onSaved: (image: string) => void }) {
-  const [image, setImage] = useState(initialImage);
+function AvatarModal({
+  onClose,
+  onSaved,
+  onError,
+}: {
+  onClose: () => void;
+  onSaved: (image: string | null) => void;
+  onError: (message: string | null) => void;
+}) {
+  const [file, setFile] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     setError(null);
+    onError(null);
+    if (!file) {
+      setError("Choose an image file first.");
+      return;
+    }
     try {
-      await updateAuthUser({ image: image.trim() || null });
-      onSaved(image.trim());
+      setUploading(true);
+      const signed = await perchApi.me.presignAvatar(file.type);
+      const upload = await fetch(signed.uploadUrl, {
+        method: "PUT",
+        headers: signed.requiredHeaders,
+        body: file,
+      });
+      if (!upload.ok) throw new Error(`Upload failed with status ${upload.status}.`);
+      await perchApi.me.confirmAvatar(signed.key);
+      const me = await perchApi.me.get();
+      onSaved(me.avatarUrl);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update avatar.");
+      const message = err instanceof Error ? err.message : "Failed to upload avatar.";
+      setError(message);
+      onError(message);
+    } finally {
+      setUploading(false);
     }
   }
 
@@ -195,18 +239,27 @@ function AvatarModal({ initialImage, onClose, onSaved }: { initialImage: string;
     <MonoModal title="Set avatar" onClose={onClose}>
       <form className="space-y-4 p-5" onSubmit={submit}>
         {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[13px] text-rose-700">{error}</div>}
-        <Field label="Image URL"><input className={inputClass} value={image} onChange={(event) => setImage(event.target.value)} placeholder="https://..." /></Field>
-        <ModalActions onCancel={onClose} submitLabel="Save avatar" />
+        <Field label="Image file">
+          <input
+            className={inputClass}
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+            required
+          />
+        </Field>
+        {file && <p className="text-[12px] text-zinc-500">{file.name} · {Math.round(file.size / 1024)} KB</p>}
+        <ModalActions onCancel={onClose} submitLabel={uploading ? "Uploading..." : "Upload avatar"} disabled={uploading} />
       </form>
     </MonoModal>
   );
 }
 
-function ModalActions({ onCancel, submitLabel }: { onCancel: () => void; submitLabel: string }) {
+function ModalActions({ onCancel, submitLabel, disabled = false }: { onCancel: () => void; submitLabel: string; disabled?: boolean }) {
   return (
     <div className="flex justify-end gap-2 pt-1">
-      <button type="button" className="rounded-lg border border-zinc-200 bg-white px-3.5 py-2 text-[13px] font-medium text-zinc-700" onClick={onCancel}>Cancel</button>
-      <button className="rounded-lg bg-zinc-900 px-3.5 py-2 text-[13px] font-medium text-white">{submitLabel}</button>
+      <button type="button" className="rounded-lg border border-zinc-200 bg-white px-3.5 py-2 text-[13px] font-medium text-zinc-700" onClick={onCancel} disabled={disabled}>Cancel</button>
+      <button className="rounded-lg bg-zinc-900 px-3.5 py-2 text-[13px] font-medium text-white disabled:opacity-50" disabled={disabled}>{submitLabel}</button>
     </div>
   );
 }

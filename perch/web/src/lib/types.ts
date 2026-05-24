@@ -65,6 +65,17 @@ export type ApiKey = {
   revokedAt: TimestampMs | null;
 };
 
+export type MeResponse = {
+  email: string;
+  avatarUrl: string | null;
+};
+
+export type OwnerAvatarPresignResponse = {
+  uploadUrl: string;
+  requiredHeaders: Record<string, string>;
+  key: string;
+};
+
 export type AnalyticsRange = {
   from: TimestampMs;
   to: TimestampMs;

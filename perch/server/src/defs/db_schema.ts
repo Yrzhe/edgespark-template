@@ -106,6 +106,12 @@ export const dailyAnalyticsRollups = sqliteTable(
   ]
 );
 
+export const ownerSettings = sqliteTable("owner_settings", {
+  id: text("id").primaryKey(),
+  avatarS3Uri: text("avatar_s3_uri"),
+  updatedAt: integer("updated_at").notNull(),
+});
+
 // Exact Hatch shape; keep compatible with managementAuth and the API Keys screen.
 export const apiKeys = sqliteTable("api_keys", {
   id: text("id").primaryKey(),

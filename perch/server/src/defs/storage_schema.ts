@@ -2,6 +2,7 @@
  * Storage Schema — Perch media bucket.
  *
  * Keys:
+ * - owner/avatar/<asset_id>/<filename>
  * - pages/<page_id>/avatars/<asset_id>/<filename>
  * - pages/<page_id>/covers/<asset_id>/<filename>
  * - pages/<page_id>/links/<link_id>/<asset_id>/<filename>
