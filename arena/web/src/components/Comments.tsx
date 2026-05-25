@@ -1,7 +1,8 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { AtSign, Send } from "lucide-react";
 
+import { ContestantAvatar } from "@/components/ContestantAvatar";
 import { Panel } from "@/components/ui";
 import { arenaApi } from "@/lib/api";
 import { INK, NAVY, ORANGE } from "@/lib/constants";
@@ -25,7 +26,12 @@ export function CommentComposer({
 }) {
   const { t } = useTranslation();
   const [text, setText] = useState(defaultText);
-  const suggestions = useMemo(() => mentionSuggestions(text, contestants), [text, contestants]);
+  const [cursor, setCursor] = useState(defaultText.length);
+  const [highlighted, setHighlighted] = useState(0);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const mention = useMemo(() => currentMention(text, cursor), [text, cursor]);
+  const suggestions = useMemo(() => mention ? mentionSuggestions(mention.query, contestants) : [], [mention, contestants]);
+  const showSuggestions = suggestions.length > 0;
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -36,24 +42,57 @@ export function CommentComposer({
     const created = latest.comments.find((comment) => comment.id === result.id);
     if (created) onSent(created);
     setText("");
+    setCursor(0);
+  }
+
+  function replaceMention(contestant: ContestantSummary) {
+    if (!mention) return;
+    const next = `${text.slice(0, mention.start)}@${contestant.id} ${text.slice(mention.end)}`;
+    const nextCursor = mention.start + contestant.id.length + 2;
+    setText(next);
+    setCursor(nextCursor);
+    setHighlighted(0);
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(nextCursor, nextCursor);
+    });
+  }
+
+  function onKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (!showSuggestions) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      setHighlighted((index) => (index + (event.key === "ArrowDown" ? 1 : -1) + suggestions.length) % suggestions.length);
+    }
+    if (event.key === "Enter" || event.key === "Tab") {
+      event.preventDefault();
+      replaceMention(suggestions[highlighted]);
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setCursor(-1);
+    }
   }
 
   return (
     <form onSubmit={(event) => void submit(event)} className="relative">
+      {showSuggestions && (
+        <div className="absolute bottom-full z-30 mb-2 max-h-56 w-full overflow-auto rounded-xl border-2 bg-white p-2 shadow-lg" style={{ borderColor: INK }}>
+          {suggestions.map((c, index) => <button type="button" key={c.id} className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left hover:bg-zinc-100" style={{ background: index === highlighted ? "#0C0A0F0B" : "#fff" }} onMouseDown={(event) => { event.preventDefault(); replaceMention(c); }}>
+            <ContestantAvatar name={c.displayName} company={`${c.company ?? c.tagline} ${c.displayName}`} avatarUrl={c.avatarUrl} color={c.accentColor} size="sm" />
+            <span className="min-w-0 flex-1"><span className="block truncate text-sm font-black">{c.displayName}</span><span className="block truncate text-[11px] font-semibold text-zinc-500">@{c.id}</span></span>
+          </button>)}
+        </div>
+      )}
       <div className="flex gap-2">
         <div className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border-2 px-3 py-2" style={{ borderColor: INK }}>
           <AtSign size={16} />
-          <input disabled={!enabled} className="min-w-0 flex-1 bg-transparent text-sm font-semibold outline-none disabled:opacity-50" value={text} onChange={(e) => setText(e.target.value)} placeholder={enabled ? t("dashboard.commentPlaceholder") : t("dashboard.commentsClosed")} />
+          <input ref={inputRef} disabled={!enabled} className="min-w-0 flex-1 bg-transparent text-sm font-semibold outline-none disabled:opacity-50" value={text} onChange={(e) => { setText(e.target.value); setCursor(e.target.selectionStart ?? e.target.value.length); setHighlighted(0); }} onClick={(event) => setCursor(event.currentTarget.selectionStart ?? text.length)} onKeyUp={(event) => setCursor(event.currentTarget.selectionStart ?? text.length)} onKeyDown={onKeyDown} placeholder={enabled ? t("dashboard.commentPlaceholder") : t("dashboard.commentsClosed")} />
         </div>
         <button className="rounded-lg px-4 py-2 text-sm font-black text-white disabled:opacity-50" disabled={!enabled} style={{ background: ORANGE }} type="submit">
           <Send size={16} />
         </button>
       </div>
-      {suggestions.length > 0 && (
-        <div className="absolute z-20 mt-2 max-h-44 w-full overflow-auto rounded-lg border-2 bg-white p-2 shadow" style={{ borderColor: INK }}>
-          {suggestions.map((c) => <button type="button" key={c.id} className="block w-full rounded px-2 py-1 text-left text-sm font-bold hover:bg-zinc-100" onClick={() => setText(replaceMentionToken(text, c.id))}>@{c.id} · {c.displayName}</button>)}
-        </div>
-      )}
     </form>
   );
 }
@@ -96,15 +135,19 @@ export function dedupeComments(comments: Comment[]) {
   return [...new Map(comments.map((comment) => [comment.id, comment])).values()].sort((a, b) => b.createdAt - a.createdAt);
 }
 
-function mentionSuggestions(text: string, contestants: ContestantSummary[]) {
-  const match = text.match(/@([a-zA-Z0-9_-]*)$/);
-  if (!match) return [];
-  const q = match[1].toLowerCase();
-  return contestants.filter((c) => c.id.toLowerCase().startsWith(q)).slice(0, 8);
+function currentMention(text: string, cursor: number) {
+  if (cursor < 0) return null;
+  const before = text.slice(0, cursor);
+  const match = before.match(/(^|\s)@([a-zA-Z0-9_-]*)$/);
+  if (!match) return null;
+  return { start: cursor - match[2].length - 1, end: cursor, query: match[2].toLowerCase() };
 }
 
-function replaceMentionToken(text: string, id: string) {
-  return text.replace(/@([a-zA-Z0-9_-]*)$/, `@${id} `);
+function mentionSuggestions(query: string, contestants: ContestantSummary[]) {
+  const q = query.trim().toLowerCase();
+  return contestants
+    .filter((c) => !q || c.id.toLowerCase().includes(q) || c.displayName.toLowerCase().includes(q))
+    .slice(0, 8);
 }
 
 function highlightMentions(text: string, contestants: ContestantSummary[]) {
