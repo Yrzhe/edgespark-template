@@ -108,7 +108,7 @@ export default function AdminPage() {
         </div>
         <div className="mt-auto hidden items-center gap-2 rounded-lg px-2 py-2 lg:flex" style={{ background: CREAM }}><span className="grid h-6 w-6 place-items-center rounded-full text-[10px] font-bold text-white" style={{ background: NAVY }}>O</span><span className="text-xs font-semibold">{t("admin.owner")}</span></div>
       </aside>
-      <main className="flex-1 overflow-auto p-7">
+      <main className="thin-scrollbar flex-1 overflow-auto p-7">
         <div className="max-w-[920px]">
           {error && <div className="mb-4 rounded-lg border-2 px-3 py-2 text-sm font-bold" style={{ borderColor: RED, color: RED }}>{error}</div>}
           <section className="rounded-2xl border-2 bg-white p-5" style={{ borderColor: INK }}>

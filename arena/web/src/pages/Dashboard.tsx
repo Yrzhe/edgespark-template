@@ -140,7 +140,7 @@ export default function DashboardPage() {
             <motion.span className="ml-1 h-1.5 w-1.5 rounded-full" style={{ background: ORANGE }} animate={{ opacity: [1, 0.2, 1] }} transition={{ repeat: Infinity, duration: 1.4 }} />
             <span className="ml-auto text-[11px]" style={{ color: "#4A4A4F" }}>{t("dashboard.mentionBonus")}</span>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3"><CommentList comments={comments.slice(0, 8)} contestants={contestants} /></div>
+          <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto px-4 py-3"><CommentList comments={comments.slice(0, 8)} contestants={contestants} /></div>
           <div className="shrink-0 border-t-2 p-3" style={{ borderColor: "#0C0A0F14" }}>
             <CommentComposer contestants={contestants} enabled={competition?.status !== "ended" && !!competition?.commentsEnabled} authenticated={isAuthenticated} onLogin={onLogin} onSent={(comment) => setComments((prev) => [comment, ...prev])} status={competition?.status} />
           </div>
