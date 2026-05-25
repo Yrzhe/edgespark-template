@@ -16,6 +16,7 @@ import { toNum } from "@/lib/format";
 import type { Comment, CompetitionResponse, ContestantDetail, DailyResponse, Decision, SeriesRange } from "@/lib/types";
 
 const profileRanges: SeriesRange[] = ["lifetime", "3d", "2d", "1d", "12h"];
+const defaultProfileRange: SeriesRange = "lifetime";
 
 export default function ContestantPage() {
   const { t } = useTranslation();
@@ -28,7 +29,7 @@ export default function ContestantPage() {
   const [cursor, setCursor] = useState<string | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
   const [daily, setDaily] = useState<DailyResponse["days"]>([]);
-  const [equityRange, setEquityRange] = useState<SeriesRange>("lifetime");
+  const [equityRange, setEquityRange] = useState<SeriesRange>(defaultProfileRange);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   async function load() {
@@ -108,10 +109,10 @@ export default function ContestantPage() {
             <h2 className="mb-3 font-extrabold">{t("contestant.positions")}</h2>
             <div className="flex flex-col gap-2">{contestant.positions.length ? contestant.positions.map((p, index) => <div key={`${p.symbol}-${index}`} className="flex items-center gap-2 border-b py-2 last:border-0" style={{ borderColor: "#0C0A0F12" }}><span className="w-14 text-sm font-bold">{p.symbol ?? "-"}</span><span className="rounded px-1.5 py-0.5 text-[10px] font-bold text-white" style={{ background: String(p.side).toLowerCase() === "long" ? GREEN : RED }}>{String(p.side ?? "-")}</span><span className="text-xs" style={{ color: "#4A4A4F" }}>{p.qty ?? "-"}@{p.avg_entry_price ?? "-"}</span><span className="ml-auto text-sm font-bold" style={{ color: toNum(p.unrealized_pl) >= 0 ? GREEN : RED }}>{formatMoney(toNum(p.unrealized_pl))}</span></div>) : <div className="py-6 text-center text-sm font-bold text-zinc-500">{t("contestant.noPositions")}</div>}</div>
           </section>
-          <section className="col-span-2 rounded-2xl border-2 bg-white p-5 max-lg:col-span-1" style={{ borderColor: INK }}>
-            <div className="mb-3 flex items-center gap-2"><MessageSquare size={16} color={ORANGE} /><h2 className="font-extrabold">{t("contestant.decisions")}</h2><span className="text-[11px]" style={{ color: "#4A4A4F" }}>{t("contestant.includesChain")}</span></div>
-            <div className="flex flex-col gap-2">{decisions.map((decision) => <DecisionRow key={decision.id} decision={decision} open={!!expanded[decision.id]} onToggle={() => setExpanded((prev) => ({ ...prev, [decision.id]: !prev[decision.id] }))} />)}</div>
-            {cursor && <button className="mt-4 rounded-lg border-2 px-4 py-2 text-xs font-bold" style={{ borderColor: INK }} onClick={() => void loadMore()}>{t("app.loadMore")}</button>}
+          <section className="col-span-2 flex h-[520px] min-h-0 flex-col rounded-2xl border-2 bg-white p-5 max-lg:col-span-1" style={{ borderColor: INK }}>
+            <div className="mb-3 flex shrink-0 items-center gap-2"><MessageSquare size={16} color={ORANGE} /><h2 className="font-extrabold">{t("contestant.decisions")}</h2><span className="text-[11px]" style={{ color: "#4A4A4F" }}>{t("contestant.includesChain")}</span></div>
+            <div className="thin-scrollbar flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-1">{decisions.map((decision) => <DecisionRow key={decision.id} decision={decision} open={!!expanded[decision.id]} onToggle={() => setExpanded((prev) => ({ ...prev, [decision.id]: !prev[decision.id] }))} />)}</div>
+            {cursor && <button className="mt-4 shrink-0 rounded-lg border-2 px-4 py-2 text-xs font-bold" style={{ borderColor: INK }} onClick={() => void loadMore()}>{t("app.loadMore")}</button>}
           </section>
         </div>
 
