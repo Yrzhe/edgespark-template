@@ -119,8 +119,14 @@ describe("public routes with mocked EdgeSpark runtime", () => {
         { seasonId: "season-1", contestantId: "claude", bucketStart: 120000, count: 10 },
       ]
     );
+    const beforeSeries = Date.now();
     res = await app.request("https://arena.test/api/public/votes/series?ids=claude");
-    expect((await res.json()).series.claude).toEqual([{ t: 60000, count: 0 }, { t: 60000, count: 5 }, { t: 120000, count: 15 }]);
+    const afterSeries = Date.now();
+    const voteSeries = (await res.json()).series.claude;
+    expect(voteSeries.slice(0, 3)).toEqual([{ t: 60000, count: 0 }, { t: 60000, count: 5 }, { t: 120000, count: 15 }]);
+    expect(voteSeries.at(-1).count).toBe(15);
+    expect(voteSeries.at(-1).t).toBeGreaterThanOrEqual(beforeSeries);
+    expect(voteSeries.at(-1).t).toBeLessThanOrEqual(afterSeries);
 
     queue.push(
       [competition()],
@@ -242,8 +248,11 @@ describe("public routes with mocked EdgeSpark runtime", () => {
       [{ seasonId: "season-1", contestantId: "claude", bucketStart: recentPoint, count: 10 }]
     );
     res = await app.request("https://arena.test/api/public/votes/series?ids=claude&range=3d");
+    const afterVotes3d = Date.now();
     const votes3d = await res.json();
     expect(votes3d.series.claude[0].count).toBe(0);
+    expect(votes3d.series.claude.at(-1).count).toBe(10);
+    expect(votes3d.series.claude.at(-1).t).toBeLessThanOrEqual(afterVotes3d);
 
     queue.push(
       [competition()],
@@ -254,11 +263,14 @@ describe("public routes with mocked EdgeSpark runtime", () => {
       ]
     );
     res = await app.request("https://arena.test/api/public/votes/series?ids=claude&range=max");
+    const afterVotesAll = Date.now();
     const votesAll = await res.json();
     expect(votesAll.series.claude[0].count).toBe(0);
+    expect(votesAll.series.claude.at(-1).count).toBe(15);
+    expect(votesAll.series.claude.at(-1).t).toBeLessThanOrEqual(afterVotesAll);
     expect(votesAll.series.claude.length).toBeGreaterThanOrEqual(votes3d.series.claude.length);
-    expect(votes3d.series.claude).toHaveLength(2);
-    expect(votesAll.series.claude).toHaveLength(3);
+    expect(votes3d.series.claude).toHaveLength(3);
+    expect(votesAll.series.claude).toHaveLength(4);
   });
 
   it("covers management read/edit/sync routes with mocked DB", async () => {

@@ -38,7 +38,7 @@ export default function DashboardPage() {
   const [contestants, setContestants] = useState<ContestantSummary[]>([]);
   const [comments, setComments] = useState<Comment[]>([]);
   const [range, setRange] = useState<SeriesRange>((searchParams.get("range") as SeriesRange) || "12h");
-  const [metric, setMetric] = useState<ChartMetric>((searchParams.get("metric") as ChartMetric) || "equity");
+  const [metric, setMetric] = useState<ChartMetric>((searchParams.get("metric") as ChartMetric) || "votes");
   const [topN, setTopN] = useState(8);
   const [chartSeries, setChartSeries] = useState<SeriesMap>({});
   const [equityOverviewSeries, setEquityOverviewSeries] = useState<SeriesMap>({});

@@ -26,9 +26,11 @@ export const seriesRoutes = new Hono()
       .where(and(eq(voteBuckets.seasonId, comp.activeSeasonId), gte(voteBuckets.bucketStart, since)))
       .orderBy(asc(voteBuckets.contestantId), asc(voteBuckets.bucketStart));
     const raw = cumulativeBuckets(rows);
+    const now = Date.now();
+    const baselineT = comp.startsAt ?? rows[0]?.bucketStart ?? Math.max(0, now - 1);
     const series = Object.fromEntries(ids.map((id) => [
       id,
-      resample(withVoteBaseline(raw[id] ?? [], comp.startsAt ?? rows[0]?.bucketStart ?? Math.max(0, Date.now() - 1)), allRange ? 300 : 120),
+      resampleWithLast(withVoteCurrentPoint(withVoteBaseline(raw[id] ?? [], baselineT), now), allRange ? 300 : 120),
     ]));
     return c.json({ series });
   })
@@ -61,4 +63,17 @@ export const seriesRoutes = new Hono()
 function withVoteBaseline(points: Array<{ t: number; count: number }>, baselineT: number): Array<{ t: number; count: number }> {
   if (points[0]?.count === 0) return points;
   return [{ t: baselineT, count: 0 }, ...points];
+}
+
+function withVoteCurrentPoint(points: Array<{ t: number; count: number }>, now: number): Array<{ t: number; count: number }> {
+  const last = points.at(-1);
+  if (!last || now <= last.t) return points;
+  return [...points, { t: now, count: last.count }];
+}
+
+function resampleWithLast<T>(points: T[], max: number): T[] {
+  if (points.length <= max) return points;
+  const sampled = resample(points, Math.max(1, max - 1));
+  const last = points.at(-1);
+  return last === undefined || sampled.at(-1) === last ? sampled : [...sampled, last];
 }
