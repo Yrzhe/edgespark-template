@@ -1,7 +1,7 @@
 # EdgeSpark Templates
 
 <p align="center">
-  <img src="docs/banner.png" alt="EdgeSpark Templates — Hatch &amp; Perch" />
+  <img src="docs/banner.png" alt="EdgeSpark Templates — Hatch, Perch &amp; Arena" />
 </p>
 
 A collection of one-command, AI-agent-native templates for [EdgeSpark](https://edgespark.dev).
