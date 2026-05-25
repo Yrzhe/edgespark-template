@@ -2,8 +2,8 @@ import { useEffect, useRef } from "react";
 
 import { arenaApi } from "@/lib/api";
 
-const PUMP_INTERVAL_MS = 45000;
-const MIN_GAP_MS = 25000;
+const PUMP_INTERVAL_MS = 20000;
+const MIN_GAP_MS = 18000;
 const LAST_SYNC_STORAGE = "arena.lastSyncAt";
 const LAST_SYNC_EVENT = "arena:last-sync";
 let sharedRunning = false;
@@ -19,7 +19,7 @@ export function useUpstreamPump() {
 
     async function run(force = false) {
       if (cancelled || document.visibilityState === "hidden") return;
-      await runUpstreamPumpOnce({ force, throttle: true, requireLive: !force });
+      await runUpstreamPumpOnce({ force, throttle: true, requireLive: true });
     }
 
     void run(true);

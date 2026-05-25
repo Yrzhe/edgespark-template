@@ -1,5 +1,5 @@
 export type CompetitionStatus = "draft" | "live" | "ended";
-export type SeriesRange = "12h" | "1d" | "2d" | "3d" | "all";
+export type SeriesRange = "12h" | "1d" | "2d" | "3d" | "all" | "lifetime";
 export type ChartMetric = "equity" | "votes";
 
 export interface CompetitionResponse {

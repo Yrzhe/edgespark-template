@@ -1,5 +1,5 @@
 export type RangeKey = "12h" | "1d" | "2d" | "3d";
-export type RangeMode = RangeKey | "all" | "max";
+export type RangeMode = RangeKey | "all" | "max" | "lifetime";
 
 const RANGES: Record<RangeKey, number> = {
   "12h": 12 * 60 * 60 * 1000,
@@ -14,6 +14,10 @@ export function rangeMs(input: string | undefined | null): number {
 
 export function isAllRange(input: string | undefined | null): boolean {
   return input === "all" || input === "max";
+}
+
+export function isLifetimeRange(input: string | undefined | null): boolean {
+  return input === "lifetime";
 }
 
 export function resample<T>(points: T[], max = 120): T[] {

@@ -274,6 +274,35 @@ describe("public routes with mocked EdgeSpark runtime", () => {
     expect(votesAll.series.claude).toHaveLength(4);
   });
 
+  it("returns full stored equity history when range is lifetime", async () => {
+    const { default: app } = await import("../src/index");
+    const now = Date.now();
+    const day = 24 * 60 * 60 * 1000;
+    const oldPoint = now - 10 * day;
+    const recentPoint = now - day;
+    const comp = { ...competition(), startsAt: now - 3 * day };
+    const snapshotPayload = {
+      snapshots: {
+        claude: [
+          { fetchedAt: oldPoint, equity: "70" },
+          { fetchedAt: recentPoint, equity: "130" },
+        ],
+      },
+    };
+
+    queue.push([comp], [{ payload: JSON.stringify(snapshotPayload), fetchedAt: now }]);
+    let res = await app.request("https://arena.test/api/public/equity-series?ids=claude&range=all");
+    const all = await res.json();
+
+    queue.push([comp], [{ payload: JSON.stringify(snapshotPayload), fetchedAt: now }]);
+    res = await app.request("https://arena.test/api/public/equity-series?ids=claude&range=lifetime");
+    const lifetime = await res.json();
+
+    expect(lifetime.series.claude.length).toBeGreaterThanOrEqual(all.series.claude.length);
+    expect(all.series.claude).toHaveLength(1);
+    expect(lifetime.series.claude).toHaveLength(2);
+  });
+
   it("serves daily rollups with absolute deltas", async () => {
     const { default: app } = await import("../src/index");
     queue.push(

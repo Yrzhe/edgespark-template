@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { and, asc, eq, gte } from "drizzle-orm";
 import { contestantTotals, upstreamCache, voteBuckets } from "@defs";
 import { INGEST_SNAPSHOTS_RESOURCE, parseCachedPayload, toEpochMs, type SnapshotsPayload } from "../lib/ingest";
-import { cumulativeBuckets, isAllRange, parseIds, rangeMs, resample, topIdsByMetric } from "../lib/series";
+import { cumulativeBuckets, isAllRange, isLifetimeRange, parseIds, rangeMs, resample, topIdsByMetric } from "../lib/series";
 import { ensureCompetition, publicOriginFromHeaders } from "../lib/season";
 import { numberish } from "../lib/upstream";
 
@@ -46,7 +46,8 @@ export const seriesRoutes = new Hono()
     );
     const range = c.req.query("range");
     const allRange = isAllRange(range);
-    const since = allRange ? (comp.startsAt ?? Number.NEGATIVE_INFINITY) : Date.now() - rangeMs(range);
+    const lifetimeRange = isLifetimeRange(range);
+    const since = lifetimeRange ? Number.NEGATIVE_INFINITY : allRange ? (comp.startsAt ?? Number.NEGATIVE_INFINITY) : Date.now() - rangeMs(range);
     const series: Record<string, Array<{ t: number; equity: number }>> = {};
     for (const id of agents) {
       const points = payload?.snapshots?.[id] ?? [];
@@ -54,7 +55,7 @@ export const seriesRoutes = new Hono()
         points
           .map((p) => ({ t: toEpochMs(p.fetchedAt), equity: numberish(p.equity) }))
           .filter((p) => Number.isFinite(p.t) && p.t >= since),
-        allRange ? 300 : 120
+        allRange || lifetimeRange ? 300 : 120
       );
     }
     return c.json({ series });

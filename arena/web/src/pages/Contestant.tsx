@@ -13,7 +13,9 @@ import { VoteButton } from "@/components/VoteButton";
 import { arenaApi } from "@/lib/api";
 import { CREAM, GREEN, INK, NAVY, ORANGE, RED } from "@/lib/constants";
 import { toNum } from "@/lib/format";
-import type { Comment, CompetitionResponse, ContestantDetail, DailyResponse, Decision } from "@/lib/types";
+import type { Comment, CompetitionResponse, ContestantDetail, DailyResponse, Decision, SeriesRange } from "@/lib/types";
+
+const profileRanges: SeriesRange[] = ["lifetime", "3d", "2d", "1d", "12h"];
 
 export default function ContestantPage() {
   const { t } = useTranslation();
@@ -26,6 +28,7 @@ export default function ContestantPage() {
   const [cursor, setCursor] = useState<string | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
   const [daily, setDaily] = useState<DailyResponse["days"]>([]);
+  const [equityRange, setEquityRange] = useState<SeriesRange>("lifetime");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   async function load() {
@@ -33,7 +36,7 @@ export default function ContestantPage() {
     const [detail, comp, equity, firstDecisions, nextComments, dailyRows] = await Promise.all([
       arenaApi.contestant(id),
       arenaApi.competition(),
-      arenaApi.equitySeries("3d", [id]),
+      arenaApi.equitySeries(equityRange, [id]),
       arenaApi.decisions({ contestantId: id, limit: 20 }),
       arenaApi.comments({ limit: 50 }),
       arenaApi.daily(id),
@@ -47,7 +50,7 @@ export default function ContestantPage() {
     setDaily(dailyRows.days);
   }
 
-  useEffect(() => { void load(); }, [id]);
+  useEffect(() => { void load(); }, [id, equityRange]);
 
   async function loadMore() {
     if (!id || !cursor) return;
@@ -88,7 +91,7 @@ export default function ContestantPage() {
 
         <div className="grid grid-cols-3 gap-5 max-lg:grid-cols-1">
           <section className="col-span-2 rounded-2xl border-2 bg-white p-5 max-lg:col-span-1" style={{ borderColor: INK }}>
-            <div className="mb-2 flex items-center gap-2"><Activity size={16} color={NAVY} /><h2 className="font-extrabold">{t("contestant.equityCurve")}</h2></div>
+            <div className="mb-2 flex flex-wrap items-center gap-2"><Activity size={16} color={NAVY} /><h2 className="font-extrabold">{t("contestant.equityCurve")}</h2><div className="ml-auto flex overflow-hidden rounded-lg border-2 text-xs font-bold" style={{ borderColor: INK }}>{profileRanges.map((item) => <button key={item} onClick={() => setEquityRange(item)} className="px-2.5 py-1.5" style={{ background: equityRange === item ? INK : "#fff", color: equityRange === item ? "#fff" : INK }}>{t(`dashboard.range${rangeKey(item)}`)}</button>)}</div></div>
             <div className="overflow-x-auto"><div className="min-w-[700px]"><Curve pts={series.length ? series : [contestant.equity, contestant.equity]} color={color} /></div></div>
           </section>
           <section className="flex flex-col items-center justify-center rounded-2xl border-2 p-5 text-center" style={{ borderColor: INK, background: INK, color: CREAM }}>
@@ -136,6 +139,10 @@ function DailyRows({ days }: { days: DailyResponse["days"] }) {
 
 function MetricBar({ label, value, max, color, format }: { label: string; value: number; max: number; color: string; format: (value: number) => string }) {
   return <div><div className="mb-1 flex items-center justify-between text-[11px] font-bold text-zinc-500"><span>{label}</span><span style={{ color }}>{value >= 0 ? "+" : ""}{format(value)}</span></div><div className="h-2 overflow-hidden rounded-full" style={{ background: "#0C0A0F0B" }}><div className="h-full rounded-full" style={{ width: `${Math.min(100, Math.abs(value) / max * 100)}%`, background: color }} /></div></div>;
+}
+
+function rangeKey(range: SeriesRange) {
+  return range === "12h" ? "12h" : range === "1d" ? "1d" : range === "2d" ? "2d" : range === "3d" ? "3d" : "Lifetime";
 }
 
 function Stat({ label, value, sub, subColor }: { label: string; value: string; sub?: string; subColor?: string }) {
