@@ -34,6 +34,7 @@ const db = {
       where: () => ({ returning: () => Promise.resolve([{ id: 1 }]) }),
     }),
   }),
+  delete: () => ({ where: () => ({ kind: "delete" }) }),
   batch: async (items: unknown[]) => Promise.all(items),
 };
 
@@ -273,6 +274,25 @@ describe("public routes with mocked EdgeSpark runtime", () => {
     expect(votesAll.series.claude).toHaveLength(4);
   });
 
+  it("serves daily rollups with absolute deltas", async () => {
+    const { default: app } = await import("../src/index");
+    queue.push(
+      [competition()],
+      [
+        { seasonId: "season-1", contestantId: "claude", day: "2026-05-24", votes: 3, equityOpen: 100, equityClose: 105 },
+        { seasonId: "season-1", contestantId: "claude", day: "2026-05-25", votes: 7, equityOpen: 105, equityClose: 111 },
+      ]
+    );
+
+    const res = await app.request("https://arena.test/api/public/daily?contestantId=claude");
+    expect(await res.json()).toEqual({
+      days: [
+        { day: "2026-05-24", votes: 3, equityClose: 105, dVotes: 3, dEquity: 5 },
+        { day: "2026-05-25", votes: 7, equityClose: 111, dVotes: 7, dEquity: 6 },
+      ],
+    });
+  });
+
   it("covers management read/edit/sync routes with mocked DB", async () => {
     const { manageRoutes } = await import("../src/routes/manage");
     const { Hono } = await import("hono");
@@ -349,6 +369,20 @@ describe("public routes with mocked EdgeSpark runtime", () => {
 
     queue.push([competition()]);
     res = await app.request("https://arena.test/manage/votes/reset", { method: "POST" });
+    expect(res.status).toBe(200);
+
+    res = await app.request("https://arena.test/manage/clear", {
+      method: "POST",
+      body: JSON.stringify({ confirm: "NOPE" }),
+      headers: { "content-type": "application/json" },
+    });
+    expect(res.status).toBe(400);
+
+    res = await app.request("https://arena.test/manage/clear", {
+      method: "POST",
+      body: JSON.stringify({ confirm: "CLEAR" }),
+      headers: { "content-type": "application/json" },
+    });
     expect(res.status).toBe(200);
 
     res = await app.request("https://arena.test/manage/comments/1/hide", { method: "PATCH" });

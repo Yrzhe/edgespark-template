@@ -1,11 +1,13 @@
 import { Hono, type Context } from "hono";
-import { and, asc, desc, eq, sql } from "drizzle-orm";
-import { apiKeys, comments, competition, contestants } from "@defs";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { apiKeys, comments, competition, contestantTotals, contestants, dailyRollups, decisions, draftVoters, upstreamCache, voteBuckets } from "@defs";
 import type { AppEnv } from "../middleware/managementAuth";
 import { httpError } from "../lib/httpErrors";
 import { generateApiKey } from "../lib/keys";
 import { newId } from "../lib/ids";
 import { missingAgentsForSync } from "../lib/contestants";
+import { formatDailyRows } from "../lib/daily";
+import { INGEST_AGENTS_RESOURCE, INGEST_SNAPSHOTS_RESOURCE } from "../lib/ingest";
 import { ensureCompetition, publicOriginFromHeaders } from "../lib/season";
 import { fetchUpstream, validateUpstreamBaseUrl } from "../lib/upstream";
 
@@ -109,6 +111,53 @@ export const manageRoutes = new Hono<AppEnv>()
     await ensureCompetition(publicOriginFromHeaders(c.req.raw.headers, c.req.url));
     await db.update(competition).set({ activeSeasonId: seasonId, updatedAt: Date.now() }).where(eq(competition.id, "current"));
     return c.json({ ok: true, seasonId });
+  })
+  .get("/summary/votes", async (c) => {
+    const { db } = await import("edgespark");
+    const comp = await ensureCompetition(publicOriginFromHeaders(c.req.raw.headers, c.req.url));
+    const [totals, daily] = await Promise.all([
+      db.select().from(contestantTotals).where(eq(contestantTotals.seasonId, comp.activeSeasonId)),
+      db.select().from(dailyRollups).where(eq(dailyRollups.seasonId, comp.activeSeasonId)).orderBy(asc(dailyRollups.contestantId), asc(dailyRollups.day)),
+    ]);
+    return c.json({
+      contestants: totals.map((row) => ({
+        contestantId: row.contestantId,
+        total: row.total,
+        days: daily.filter((day) => day.contestantId === row.contestantId).map((day) => ({ day: day.day, votes: day.votes })),
+      })),
+    });
+  })
+  .get("/summary/equity", async (c) => {
+    const { db } = await import("edgespark");
+    const comp = await ensureCompetition(publicOriginFromHeaders(c.req.raw.headers, c.req.url));
+    const daily = await db.select().from(dailyRollups).where(eq(dailyRollups.seasonId, comp.activeSeasonId)).orderBy(asc(dailyRollups.contestantId), asc(dailyRollups.day));
+    const byId = new Map<string, typeof daily>();
+    for (const row of daily) byId.set(row.contestantId, [...(byId.get(row.contestantId) ?? []), row]);
+    return c.json({
+      contestants: [...byId.entries()].map(([contestantId, rows]) => {
+        const first = rows.find((row) => row.equityOpen != null);
+        const last = [...rows].reverse().find((row) => row.equityClose != null);
+        const equityClose = last?.equityClose ?? null;
+        const returnAbs = equityClose == null || first?.equityOpen == null ? null : equityClose - first.equityOpen;
+        return { contestantId, equityClose, returnAbs, days: formatDailyRows(rows) };
+      }),
+    });
+  })
+  .post("/clear", async (c) => {
+    const body = await readJson(c.req.raw);
+    if (!isRecord(body) || body.confirm !== "CLEAR") return httpError(c, 400, "invalid_confirm", "confirm must be CLEAR.");
+    const { db } = await import("edgespark");
+    await db.batch([
+      db.delete(voteBuckets),
+      db.delete(contestantTotals),
+      db.delete(draftVoters),
+      db.delete(comments),
+      db.delete(decisions),
+      db.delete(upstreamCache).where(inArray(upstreamCache.resource, [INGEST_AGENTS_RESOURCE, INGEST_SNAPSHOTS_RESOURCE])),
+      db.delete(dailyRollups),
+      db.delete(contestants),
+    ] as never);
+    return c.json({ ok: true });
   })
   .get("/comments", async (c) => {
     const { db } = await import("edgespark");

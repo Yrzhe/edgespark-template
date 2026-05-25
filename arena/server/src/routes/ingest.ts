@@ -9,6 +9,7 @@ import {
   validateDecisionsPayload,
   validateSnapshotsPayload,
 } from "../lib/ingest";
+import { ensureCompetition, publicOriginFromHeaders } from "../lib/season";
 
 const RATE_WINDOW_MS = 10_000;
 const RATE_LIMIT = 20;
@@ -30,7 +31,8 @@ export const ingestRoutes = new Hono().post("/ingest", async (c) => {
   const now = Date.now();
   if (body.agents !== undefined) {
     if (!validateAgentsPayload(body.agents)) return httpError(c, 400, "invalid_agents", "agents payload shape is invalid.");
-    counts.agents = await storeAgentsPayload(body.agents, now);
+    const comp = await ensureCompetition(publicOriginFromHeaders(c.req.raw.headers, c.req.url));
+    counts.agents = await storeAgentsPayload(body.agents, now, comp.activeSeasonId);
   }
   if (body.snapshots !== undefined) {
     if (!validateSnapshotsPayload(body.snapshots)) return httpError(c, 400, "invalid_snapshots", "snapshots payload shape is invalid.");

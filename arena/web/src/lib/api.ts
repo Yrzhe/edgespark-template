@@ -9,6 +9,7 @@ import type {
   CreateApiKeyResponse,
   DecisionsByMinuteResponse,
   DecisionsResponse,
+  DailyResponse,
   EquitySeriesResponse,
   IngestResponse,
   ManagedCommentsResponse,
@@ -17,6 +18,8 @@ import type {
   MeResponse,
   PresignAvatarResponse,
   SeriesRange,
+  SummaryEquityResponse,
+  SummaryVotesResponse,
   VoteResponse,
   VoteSeriesResponse,
   VotesResponse,
@@ -141,6 +144,7 @@ export const arenaApi = {
     publicApi<DecisionsResponse>(`/decisions${qs(input)}`),
   decisionsByMinute: (input: { cursor?: string | null; limit?: number } = {}) =>
     publicApi<DecisionsByMinuteResponse>(`/decisions/by-minute${qs(input)}`),
+  daily: (contestantId: string) => publicApi<DailyResponse>(`/daily${qs({ contestantId })}`),
   comments: (input: { since?: number; cursor?: string | null; limit?: number } = {}) =>
     publicApi<CommentsResponse>(`/comments${qs(input)}`),
   llms: () => publicApi<string>("/llms.txt"),
@@ -171,5 +175,8 @@ export const arenaApi = {
     keys: () => manage<ApiKeysResponse>("/keys"),
     createKey: (name: string) => manage<CreateApiKeyResponse>("/keys", { method: "POST", json: { name } }),
     revokeKey: (id: string) => manage<{ revoked: true }>(`/keys/${encodeURIComponent(id)}`, { method: "DELETE" }),
+    summaryVotes: () => manage<SummaryVotesResponse>("/summary/votes"),
+    summaryEquity: () => manage<SummaryEquityResponse>("/summary/equity"),
+    clear: () => manage<{ ok: true }>("/clear", { method: "POST", json: { confirm: "CLEAR" } }),
   },
 };

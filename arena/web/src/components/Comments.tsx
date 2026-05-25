@@ -7,7 +7,7 @@ import { Panel } from "@/components/ui";
 import { arenaApi } from "@/lib/api";
 import { INK, NAVY, ORANGE } from "@/lib/constants";
 import { formatDate } from "@/lib/format";
-import type { Comment, ContestantSummary } from "@/lib/types";
+import type { Comment, CompetitionStatus, ContestantSummary } from "@/lib/types";
 
 export function CommentComposer({
   contestants,
@@ -16,6 +16,7 @@ export function CommentComposer({
   onLogin,
   onSent,
   defaultText = "",
+  status = "live",
 }: {
   contestants: ContestantSummary[];
   enabled: boolean;
@@ -23,6 +24,7 @@ export function CommentComposer({
   onLogin: () => void;
   onSent: (comment: Comment) => void;
   defaultText?: string;
+  status?: CompetitionStatus;
 }) {
   const { t } = useTranslation();
   const [text, setText] = useState(defaultText);
@@ -93,6 +95,7 @@ export function CommentComposer({
           <Send size={16} />
         </button>
       </div>
+      {status === "draft" && <div className="mt-2 text-[11px] font-bold" style={{ color: "#4A4A4F" }}>{t("dashboard.draftMentionHint")}</div>}
     </form>
   );
 }

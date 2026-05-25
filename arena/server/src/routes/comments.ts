@@ -4,6 +4,7 @@ import { and, desc, eq, gt, inArray, lt, or, sql } from "drizzle-orm";
 import { comments, contestantTotals, contestants, voteBuckets } from "@defs";
 import { encodeCursor, parseCursor } from "../lib/cursor";
 import { heartsAwarded, parseMentionIds, safeMentions, sanitizeCommentText } from "../lib/comments";
+import { dailyVoteStatement } from "../lib/daily";
 import { httpError } from "../lib/httpErrors";
 import { bucketStart, ensureCompetition, publicOriginFromHeaders } from "../lib/season";
 
@@ -41,14 +42,16 @@ export const commentsWriteRoutes = new Hono().post("/comments", async (c) => {
   if (!text) return httpError(c, 400, "invalid_text", "text is required.");
   const { db } = await import("edgespark");
   const comp = await ensureCompetition(publicOriginFromHeaders(c.req.raw.headers, c.req.url));
-  if (comp.status !== "live" || comp.commentsEnabled !== 1) return c.json({ error: "NOT_LIVE" }, 403);
+  if (comp.commentsEnabled !== 1 || comp.status === "ended") return c.json({ error: "NOT_LIVE" }, 403);
+  if (comp.status !== "draft" && comp.status !== "live") return c.json({ error: "NOT_LIVE" }, 403);
 
   const mentioned = parseMentionIds(text);
   const validRows = mentioned.length
     ? await db.select({ id: contestants.id }).from(contestants).where(and(inArray(contestants.id, mentioned), eq(contestants.hidden, 0)))
     : [];
   const validIds = validRows.map((row) => row.id);
-  const awarded = heartsAwarded(validIds);
+  const awardHearts = comp.status === "live";
+  const awarded = awardHearts ? heartsAwarded(validIds) : {};
   const now = Date.now();
   const statements = [
     db.insert(comments).values({
@@ -60,12 +63,13 @@ export const commentsWriteRoutes = new Hono().post("/comments", async (c) => {
       createdAt: now,
       hidden: 0,
     }).returning({ id: comments.id }),
-    ...validIds.flatMap((contestantId) => [
+    ...(awardHearts ? validIds.flatMap((contestantId) => [
       db.insert(voteBuckets).values({ seasonId: comp.activeSeasonId, contestantId, bucketStart: bucketStart(now), count: 10 })
         .onConflictDoUpdate({ target: [voteBuckets.seasonId, voteBuckets.contestantId, voteBuckets.bucketStart], set: { count: sql`${voteBuckets.count} + 10` } }),
       db.insert(contestantTotals).values({ seasonId: comp.activeSeasonId, contestantId, total: 10 })
         .onConflictDoUpdate({ target: [contestantTotals.seasonId, contestantTotals.contestantId], set: { total: sql`${contestantTotals.total} + 10` } }),
-    ]),
+      dailyVoteStatement(db, comp.activeSeasonId, contestantId, 10, now),
+    ]) : []),
   ];
   const results = await db.batch(statements as never);
   const [comment] = results[0] as Array<{ id: number }>;

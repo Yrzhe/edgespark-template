@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { and, eq, sql } from "drizzle-orm";
-import { contestantTotals, contestants, voteBuckets } from "@defs";
+import { contestantTotals, contestants, draftVoters, voteBuckets } from "@defs";
+import { dailyVoteStatement } from "../lib/daily";
 import { httpError } from "../lib/httpErrors";
 import { bucketStart, ensureCompetition, publicOriginFromHeaders } from "../lib/season";
 import { clampCount } from "../lib/vote";
@@ -21,21 +22,33 @@ export const voteWriteRoutes = new Hono()
     if (!isRecord(body) || typeof body.contestantId !== "string") return httpError(c, 400, "invalid_request", "contestantId is required.");
     const { db } = await import("edgespark");
     const comp = await ensureCompetition(publicOriginFromHeaders(c.req.raw.headers, c.req.url));
-    if (comp.status !== "live" || comp.votingEnabled !== 1) return c.json({ error: "NOT_LIVE" }, 403);
+    if (comp.votingEnabled !== 1 || comp.status === "ended") return c.json({ error: "NOT_LIVE" }, 403);
+    if (comp.status !== "draft" && comp.status !== "live") return c.json({ error: "NOT_LIVE" }, 403);
     const [contestant] = await db.select().from(contestants).where(and(eq(contestants.id, body.contestantId), eq(contestants.hidden, 0))).limit(1);
     if (!contestant) return httpError(c, 400, "invalid_contestant", "Unknown or hidden contestant.");
-    const count = clampCount(body.count);
-    const nowBucket = bucketStart(Date.now());
-    await db.batch([
+    const count = comp.status === "draft" ? 1 : clampCount(body.count);
+    if (comp.status === "draft") {
+      const [draftVote] = await db
+        .select()
+        .from(draftVoters)
+        .where(and(eq(draftVoters.seasonId, comp.activeSeasonId), eq(draftVoters.userId, auth.user.id)))
+        .limit(1);
+      if (draftVote) return httpError(c, 409, "already_voted", "Draft vote already used.");
+    }
+    const now = Date.now();
+    const statements = [
+      ...(comp.status === "draft" ? [db.insert(draftVoters).values({ seasonId: comp.activeSeasonId, userId: auth.user.id })] : []),
       db
         .insert(voteBuckets)
-        .values({ seasonId: comp.activeSeasonId, contestantId: contestant.id, bucketStart: nowBucket, count })
+        .values({ seasonId: comp.activeSeasonId, contestantId: contestant.id, bucketStart: bucketStart(now), count })
         .onConflictDoUpdate({ target: [voteBuckets.seasonId, voteBuckets.contestantId, voteBuckets.bucketStart], set: { count: sql`${voteBuckets.count} + ${count}` } }),
       db
         .insert(contestantTotals)
         .values({ seasonId: comp.activeSeasonId, contestantId: contestant.id, total: count })
         .onConflictDoUpdate({ target: [contestantTotals.seasonId, contestantTotals.contestantId], set: { total: sql`${contestantTotals.total} + ${count}` } }),
-    ]);
+      dailyVoteStatement(db, comp.activeSeasonId, contestant.id, count, now),
+    ];
+    await db.batch(statements as never);
     const [total] = await db.select().from(contestantTotals).where(and(eq(contestantTotals.seasonId, comp.activeSeasonId), eq(contestantTotals.contestantId, contestant.id))).limit(1);
     return c.json({ ok: true, total: total?.total ?? count });
   });

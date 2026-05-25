@@ -81,7 +81,7 @@ describe("login-gated writes with mocked EdgeSpark runtime", () => {
     });
     expect(await res.json()).toEqual({ ok: true, total: 25 });
 
-    queue.push([competition("draft")]);
+    queue.push([competition("ended")]);
     res = await app.request("https://arena.test/api/vote", {
       method: "POST",
       body: JSON.stringify({ contestantId: "claude" }),
@@ -98,6 +98,28 @@ describe("login-gated writes with mocked EdgeSpark runtime", () => {
     expect(res.status).toBe(400);
   });
 
+  it("allows one draft vote per user and carries it into totals", async () => {
+    const { voteWriteRoutes } = await import("../src/routes/vote");
+    const app = new Hono().route("/api", voteWriteRoutes);
+
+    queue.push([competition("draft")], [{ id: "gemini", hidden: 0 }], [], [{ seasonId: "season-1", contestantId: "gemini", total: 1 }]);
+    let res = await app.request("https://arena.test/api/vote", {
+      method: "POST",
+      body: JSON.stringify({ contestantId: "gemini", count: 25 }),
+      headers: { "content-type": "application/json" },
+    });
+    expect(await res.json()).toEqual({ ok: true, total: 1 });
+
+    queue.push([competition("draft")], [{ id: "gemini", hidden: 0 }], [{ seasonId: "season-1", userId: "user-1" }]);
+    res = await app.request("https://arena.test/api/vote", {
+      method: "POST",
+      body: JSON.stringify({ contestantId: "gemini" }),
+      headers: { "content-type": "application/json" },
+    });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ error: { code: "already_voted" } });
+  });
+
   it("creates comments and awards +10 once per distinct valid mention", async () => {
     const { commentsWriteRoutes } = await import("../src/routes/comments");
     const app = new Hono().route("/api", commentsWriteRoutes);
@@ -109,15 +131,30 @@ describe("login-gated writes with mocked EdgeSpark runtime", () => {
       headers: { "content-type": "application/json" },
     });
     expect(await res.json()).toEqual({ ok: true, id: 77, heartsAwarded: { claude: 10, gpt: 10 } });
-    expect(batchCalls[0]).toHaveLength(5);
+    expect(batchCalls[0]).toHaveLength(7);
 
-    queue.push([competition("live", 1, 0)]);
+    queue.push([competition("ended")]);
     const disabled = await app.request("https://arena.test/api/comments", {
       method: "POST",
       body: JSON.stringify({ text: "@claude" }),
       headers: { "content-type": "application/json" },
     });
     expect(disabled.status).toBe(403);
+  });
+
+  it("stores draft comments without awarding mention hearts", async () => {
+    const { commentsWriteRoutes } = await import("../src/routes/comments");
+    const app = new Hono().route("/api", commentsWriteRoutes);
+
+    queue.push([competition("draft")], [{ id: "gemini" }]);
+    const res = await app.request("https://arena.test/api/comments", {
+      method: "POST",
+      body: JSON.stringify({ text: "@gemini warmup" }),
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(await res.json()).toEqual({ ok: true, id: 77, heartsAwarded: {} });
+    expect(batchCalls.at(-1)).toHaveLength(1);
   });
 
   it("recognizes ingested contestants in comments and awards +10 for @mentions", async () => {
@@ -149,7 +186,7 @@ describe("login-gated writes with mocked EdgeSpark runtime", () => {
       isRecord(value) && value.text === "@gemini x" && typeof value.mentions === "string"
     );
     expect(commentRow?.mentions).toBe("[\"gemini\"]");
-    expect(batchCalls.at(-1)).toHaveLength(3);
+    expect(batchCalls.at(-1)).toHaveLength(4);
   });
 
   it("returns the logged-in user from /api/me", async () => {

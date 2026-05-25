@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { useTranslation } from "react-i18next";
 import { useParams } from "react-router-dom";
-import { Activity, ChevronDown, ChevronUp, Heart, MessageSquare, Trophy, TrendingDown, TrendingUp } from "lucide-react";
+import { Activity, CalendarDays, ChevronDown, ChevronUp, Heart, MessageSquare, Trophy, TrendingDown, TrendingUp } from "lucide-react";
 
 import { CommentComposer, CommentList } from "@/components/Comments";
 import { ContestantAvatar } from "@/components/ContestantAvatar";
@@ -13,7 +13,7 @@ import { VoteButton } from "@/components/VoteButton";
 import { arenaApi } from "@/lib/api";
 import { CREAM, GREEN, INK, NAVY, ORANGE, RED } from "@/lib/constants";
 import { toNum } from "@/lib/format";
-import type { Comment, CompetitionResponse, ContestantDetail, Decision } from "@/lib/types";
+import type { Comment, CompetitionResponse, ContestantDetail, DailyResponse, Decision } from "@/lib/types";
 
 export default function ContestantPage() {
   const { t } = useTranslation();
@@ -25,16 +25,18 @@ export default function ContestantPage() {
   const [decisions, setDecisions] = useState<Decision[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
+  const [daily, setDaily] = useState<DailyResponse["days"]>([]);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   async function load() {
     if (!id) return;
-    const [detail, comp, equity, firstDecisions, nextComments] = await Promise.all([
+    const [detail, comp, equity, firstDecisions, nextComments, dailyRows] = await Promise.all([
       arenaApi.contestant(id),
       arenaApi.competition(),
       arenaApi.equitySeries("3d", [id]),
       arenaApi.decisions({ contestantId: id, limit: 20 }),
       arenaApi.comments({ limit: 50 }),
+      arenaApi.daily(id),
     ]);
     setContestant(detail);
     setCompetition(comp);
@@ -42,6 +44,7 @@ export default function ContestantPage() {
     setDecisions(firstDecisions.decisions);
     setCursor(firstDecisions.nextCursor);
     setComments(nextComments.comments.filter((comment) => comment.mentions.includes(id)));
+    setDaily(dailyRows.days);
   }
 
   useEffect(() => { void load(); }, [id]);
@@ -92,7 +95,7 @@ export default function ContestantPage() {
             <Heart size={28} color={ORANGE} fill={ORANGE} />
             <div className="mt-2 text-3xl font-extrabold">{contestant.votes.toLocaleString()}</div>
             <div className="text-xs" style={{ color: "rgba(247,245,241,0.6)" }}>{t("contestant.votes")}</div>
-            <div className="mt-4"><VoteButton contestantId={contestant.id} enabled={competition?.status === "live" && !!competition.votingEnabled} authenticated={isAuthenticated} onLogin={onLogin} onTotal={(total) => setContestant({ ...contestant, votes: total })} /></div>
+            <div className="mt-4"><VoteButton contestantId={contestant.id} enabled={competition?.status !== "ended" && !!competition?.votingEnabled} authenticated={isAuthenticated} onLogin={onLogin} onTotal={(total) => setContestant({ ...contestant, votes: total })} status={competition?.status} seasonId={competition?.seasonId} /></div>
             <div className="mt-3 text-[11px]" style={{ color: "rgba(247,245,241,0.5)" }}>{t("contestant.supportHint")}</div>
           </section>
         </div>
@@ -112,11 +115,27 @@ export default function ContestantPage() {
         <div className="grid grid-cols-3 gap-5 max-lg:grid-cols-1">
           <section className="rounded-2xl border-2 bg-white p-5" style={{ borderColor: INK }}><h2 className="mb-3 font-extrabold">{t("contestant.account")}</h2><KeyValues data={contestant.account} /></section>
           <section className="rounded-2xl border-2 bg-white p-5" style={{ borderColor: INK }}><h2 className="mb-3 font-extrabold">{t("contestant.metrics")}</h2><KeyValues data={contestant.metrics} /></section>
-          <section className="rounded-2xl border-2 bg-white p-5" style={{ borderColor: INK }}><h2 className="mb-3 font-extrabold">{t("contestant.comments")}</h2><CommentComposer contestants={[contestant]} defaultText={`@${contestant.id} `} enabled={competition?.status === "live" && !!competition.commentsEnabled} authenticated={isAuthenticated} onLogin={onLogin} onSent={(comment) => setComments((prev) => [comment, ...prev])} /><div className="mt-4"><CommentList comments={comments} contestants={[contestant]} /></div></section>
+          <section className="rounded-2xl border-2 bg-white p-5" style={{ borderColor: INK }}><h2 className="mb-3 font-extrabold">{t("contestant.comments")}</h2><CommentComposer contestants={[contestant]} defaultText={`@${contestant.id} `} enabled={competition?.status !== "ended" && !!competition?.commentsEnabled} authenticated={isAuthenticated} onLogin={onLogin} onSent={(comment) => setComments((prev) => [comment, ...prev])} status={competition?.status} /><div className="mt-4"><CommentList comments={comments} contestants={[contestant]} /></div></section>
         </div>
+        <section className="rounded-2xl border-2 bg-white p-5" style={{ borderColor: INK }}>
+          <div className="mb-3 flex items-center gap-2"><CalendarDays size={16} color={ORANGE} /><h2 className="font-extrabold">{t("contestant.daily")}</h2></div>
+          <DailyRows days={daily} />
+        </section>
       </main>
     </div>
   );
+}
+
+function DailyRows({ days }: { days: DailyResponse["days"] }) {
+  const { t } = useTranslation();
+  const maxVotes = Math.max(1, ...days.map((day) => Math.abs(day.dVotes)));
+  const maxEquity = Math.max(1, ...days.map((day) => Math.abs(day.dEquity)));
+  if (!days.length) return <div className="py-6 text-center text-sm font-bold text-zinc-500">{t("app.empty")}</div>;
+  return <div className="space-y-2">{days.map((day) => <div key={day.day} className="grid items-center gap-3 rounded-xl border p-3 text-sm md:grid-cols-[110px_1fr_1fr]" style={{ borderColor: "#0C0A0F14" }}><span className="font-black">{day.day}</span><MetricBar label={t("contestant.dailyVotes")} value={day.dVotes} max={maxVotes} color={ORANGE} format={formatVotes} /><MetricBar label={t("contestant.dailyEquity")} value={day.dEquity} max={maxEquity} color={day.dEquity >= 0 ? GREEN : RED} format={formatMoney} /></div>)}</div>;
+}
+
+function MetricBar({ label, value, max, color, format }: { label: string; value: number; max: number; color: string; format: (value: number) => string }) {
+  return <div><div className="mb-1 flex items-center justify-between text-[11px] font-bold text-zinc-500"><span>{label}</span><span style={{ color }}>{value >= 0 ? "+" : ""}{format(value)}</span></div><div className="h-2 overflow-hidden rounded-full" style={{ background: "#0C0A0F0B" }}><div className="h-full rounded-full" style={{ width: `${Math.min(100, Math.abs(value) / max * 100)}%`, background: color }} /></div></div>;
 }
 
 function Stat({ label, value, sub, subColor }: { label: string; value: string; sub?: string; subColor?: string }) {

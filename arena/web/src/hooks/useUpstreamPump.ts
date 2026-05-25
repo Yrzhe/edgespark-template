@@ -4,6 +4,8 @@ import { arenaApi } from "@/lib/api";
 
 const PUMP_INTERVAL_MS = 45000;
 const MIN_GAP_MS = 25000;
+const LAST_SYNC_STORAGE = "arena.lastSyncAt";
+const LAST_SYNC_EVENT = "arena:last-sync";
 let sharedRunning = false;
 let sharedLastRun = 0;
 
@@ -16,31 +18,8 @@ export function useUpstreamPump() {
     let cancelled = false;
 
     async function run(force = false) {
-      if (cancelled || sharedRunning || document.visibilityState === "hidden") return;
-      const now = Date.now();
-      if (now - sharedLastRun < MIN_GAP_MS) return;
-      sharedRunning = true;
-      sharedLastRun = now;
-      try {
-        const competition = await arenaApi.competition();
-        if (!force && competition.status !== "live") return;
-        const base = competition.upstreamBaseUrl;
-        if (!base) return;
-        const [agents, snapshots, decisions] = await Promise.all([
-          fetchJson(joinUrl(base, "/agents")),
-          fetchJson(joinUrl(base, "/snapshots")),
-          fetchJson(joinUrl(base, "/agent/decisions")),
-        ]);
-        const body: { agents?: unknown; snapshots?: unknown; decisions?: unknown } = {};
-        if (agents.ok) body.agents = agents.data;
-        if (snapshots.ok) body.snapshots = snapshots.data;
-        if (decisions.ok) body.decisions = decisions.data;
-        if (Object.keys(body).length) await arenaApi.ingest(body);
-      } catch {
-        // The pump is opportunistic; UI reads remain D1-backed public endpoints.
-      } finally {
-        sharedRunning = false;
-      }
+      if (cancelled || document.visibilityState === "hidden") return;
+      await runUpstreamPumpOnce({ force, throttle: true, requireLive: !force });
     }
 
     void run(true);
@@ -50,6 +29,44 @@ export function useUpstreamPump() {
       window.clearInterval(timer);
     };
   }, []);
+}
+
+export async function runUpstreamPumpOnce({ force = true, throttle = false, requireLive = false }: { force?: boolean; throttle?: boolean; requireLive?: boolean } = {}) {
+  if (sharedRunning) return null;
+  const now = Date.now();
+  if (throttle && !force && now - sharedLastRun < MIN_GAP_MS) return null;
+  sharedRunning = true;
+  sharedLastRun = now;
+  try {
+    const competition = await arenaApi.competition();
+    if (requireLive && competition.status !== "live") return null;
+    const base = competition.upstreamBaseUrl;
+    if (!base) return null;
+    const [agents, snapshots, decisions] = await Promise.all([
+      fetchJson(joinUrl(base, "/agents")),
+      fetchJson(joinUrl(base, "/snapshots")),
+      fetchJson(joinUrl(base, "/agent/decisions")),
+    ]);
+    const body: { agents?: unknown; snapshots?: unknown; decisions?: unknown } = {};
+    if (agents.ok) body.agents = agents.data;
+    if (snapshots.ok) body.snapshots = snapshots.data;
+    if (decisions.ok) body.decisions = decisions.data;
+    if (!Object.keys(body).length) return null;
+    await arenaApi.ingest(body);
+    const syncedAt = Date.now();
+    localStorage.setItem(LAST_SYNC_STORAGE, String(syncedAt));
+    window.dispatchEvent(new CustomEvent(LAST_SYNC_EVENT, { detail: syncedAt }));
+    return syncedAt;
+  } catch {
+    return null;
+  } finally {
+    sharedRunning = false;
+  }
+}
+
+export function readLastSyncAt() {
+  const value = Number(localStorage.getItem(LAST_SYNC_STORAGE));
+  return Number.isFinite(value) && value > 0 ? value : null;
 }
 
 async function fetchJson(url: string): Promise<{ ok: true; data: unknown } | { ok: false }> {

@@ -11,6 +11,7 @@ export interface CompetitionResponse {
   commentsEnabled: boolean;
   seasonId: string;
   upstreamBaseUrl?: string;
+  lastSyncAt?: number | null;
 }
 
 export interface ContestantSummary {
@@ -139,6 +140,10 @@ export interface IngestResponse {
   counts?: Record<string, number>;
 }
 
+export interface DailyResponse {
+  days: Array<{ day: string; votes: number; equityClose: number | null; dEquity: number; dVotes: number }>;
+}
+
 export interface ManagedCompetitionResponse {
   competition: {
     id: string;
@@ -151,6 +156,7 @@ export interface ManagedCompetitionResponse {
     commentsEnabled: number;
     activeSeasonId: string;
     updatedAt: number;
+    lastSyncAt?: number | null;
   };
 }
 
@@ -184,6 +190,16 @@ export interface ApiKey {
 
 export interface ApiKeysResponse {
   keys: ApiKey[];
+}
+
+export interface SummaryVotesResponse {
+  contestants: Array<{ id: string; displayName: string; total: number; days: Record<string, number> }>;
+  days?: string[];
+}
+
+export interface SummaryEquityResponse {
+  contestants: Array<{ id: string; displayName: string; equity: number; returnPct: number; days: Record<string, number> }>;
+  days?: string[];
 }
 
 export interface CreateApiKeyResponse {

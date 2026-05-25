@@ -52,6 +52,28 @@ export const contestantTotals = sqliteTable(
   (t) => [primaryKey({ columns: [t.seasonId, t.contestantId] })]
 );
 
+export const draftVoters = sqliteTable(
+  "draftVoters",
+  {
+    seasonId: text("season_id").notNull(),
+    userId: text("user_id").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.seasonId, t.userId] })]
+);
+
+export const dailyRollups = sqliteTable(
+  "dailyRollups",
+  {
+    seasonId: text("season_id").notNull(),
+    contestantId: text("contestant_id").notNull(),
+    day: text("day").notNull(),
+    votes: integer("votes").notNull().default(0),
+    equityOpen: real("equity_open"),
+    equityClose: real("equity_close"),
+  },
+  (t) => [primaryKey({ columns: [t.seasonId, t.contestantId, t.day] }), index("idx_daily_rollups_day").on(t.day)]
+);
+
 export const comments = sqliteTable(
   "comments",
   {

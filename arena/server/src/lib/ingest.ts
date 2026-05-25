@@ -1,4 +1,5 @@
 import { contestants, decisions, upstreamCache } from "@defs";
+import { dailyEquityStatement } from "./daily";
 import { numberish } from "./upstream";
 
 export const INGEST_AGENTS_RESOURCE = "ingest:agents";
@@ -83,7 +84,7 @@ export function validateDecisionsPayload(value: unknown): value is DecisionsPayl
   );
 }
 
-export async function storeAgentsPayload(payload: UpstreamAgentPayload, now: number): Promise<number> {
+export async function storeAgentsPayload(payload: UpstreamAgentPayload, now: number, seasonId?: string): Promise<number> {
   const { db } = await import("edgespark");
   const json = JSON.stringify(payload);
   await db
@@ -109,6 +110,13 @@ export async function storeAgentsPayload(payload: UpstreamAgentPayload, now: num
       })
       .onConflictDoNothing();
     existing.add(agent.id);
+  }
+  if (seasonId) {
+    const statements = payload.agents
+      .map((agent) => ({ id: agent.id, equity: numberish(agent.account?.equity) }))
+      .filter((agent) => Number.isFinite(agent.equity))
+      .map((agent) => dailyEquityStatement(db, seasonId, agent.id, agent.equity, now));
+    if (statements.length) await db.batch(statements as never);
   }
   return payload.agents.length;
 }
