@@ -36,6 +36,7 @@ export default function DashboardPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [competition, setCompetition] = useState<CompetitionResponse | null>(null);
   const [contestants, setContestants] = useState<ContestantSummary[]>([]);
+  const [voteTotals, setVoteTotals] = useState<Record<string, number>>({});
   const [comments, setComments] = useState<Comment[]>([]);
   const [range, setRange] = useState<SeriesRange>((searchParams.get("range") as SeriesRange) || "12h");
   const [metric, setMetric] = useState<ChartMetric>((searchParams.get("metric") as ChartMetric) || "votes");
@@ -45,27 +46,35 @@ export default function DashboardPage() {
   const [voteOverviewSeries, setVoteOverviewSeries] = useState<SeriesMap>({});
   const selectedIds = useMemo(() => parseIds(searchParams.get("ids")), [searchParams]);
   const live = competition?.status === "live";
+  const contestantsWithVotes = useMemo(() => withVoteTotals(contestants, voteTotals), [contestants, voteTotals]);
 
   async function loadBase() {
-    const [nextCompetition, nextContestants, nextComments] = await Promise.all([
+    const [nextCompetition, nextContestants, nextComments, nextVotes] = await Promise.all([
       arenaApi.competition(),
       arenaApi.contestants(),
       arenaApi.comments({ limit: 30 }),
+      arenaApi.votes(),
     ]);
     setCompetition(nextCompetition);
     setContestants(nextContestants.contestants);
+    setVoteTotals(nextVotes.totals);
     setComments(nextComments.comments);
   }
 
+  async function loadVotes() {
+    const nextVotes = await arenaApi.votes();
+    setVoteTotals(nextVotes.totals);
+  }
+
   async function loadChartSeries() {
-    const ids = selectedIds.length ? selectedIds : defaultSeriesIds(contestants, metric, topN);
+    const ids = selectedIds.length ? selectedIds : defaultSeriesIds(withVoteTotals(contestants, voteTotals), metric, topN);
     const payload = metric === "equity" ? await arenaApi.equitySeries(range, ids) : await arenaApi.voteSeries(range, ids);
     setChartSeries(toSeriesMap(payload.series));
   }
 
   async function loadOverviewSeries() {
     const equityIds = [...contestants].sort((a, b) => a.rank - b.rank).slice(0, 40).map((c) => c.id);
-    const voteIds = [...contestants].sort((a, b) => b.votes - a.votes).slice(0, 40).map((c) => c.id);
+    const voteIds = [...withVoteTotals(contestants, voteTotals)].sort((a, b) => b.votes - a.votes).slice(0, 40).map((c) => c.id);
     const [equityPayload, votePayload] = await Promise.all([
       arenaApi.equitySeries("all", equityIds),
       arenaApi.voteSeries("all", voteIds),
@@ -82,6 +91,7 @@ export default function DashboardPage() {
   useEffect(() => { if (contestants.length) void loadChartSeries(); }, [contestants, range, metric, selectedIds.join(","), topN]);
   useEffect(() => { if (contestants.length) void loadOverviewSeries(); }, [contestants]);
   usePoll(() => arenaApi.competition().then(setCompetition), 6000, true);
+  usePoll(() => loadVotes(), 4000, competition?.status !== "ended");
   usePoll(() => loadBase(), 30000, live);
   usePoll(() => loadAllSeries(), 60000, live && contestants.length > 0);
   usePoll(async () => {
@@ -98,13 +108,38 @@ export default function DashboardPage() {
     setSearchParams(params);
   }
 
-  const byEquity = useMemo(() => [...contestants].sort((a, b) => a.rank - b.rank), [contestants]);
-  const byVotes = useMemo(() => [...contestants].sort((a, b) => b.votes - a.votes), [contestants]);
-  const chartRows = useMemo(() => chartContestants(contestants, chartSeries, selectedIds, metric, topN), [contestants, chartSeries, selectedIds, metric, topN]);
+  function setVoteTotal(id: string, total: number) {
+    setVoteTotals((prev) => ({ ...prev, [id]: total }));
+    patchVoteSeries(id, total);
+  }
+
+  function addVoteDeltas(deltas: Record<string, number>) {
+    const totals = withVoteTotals(contestants, voteTotals);
+    Object.entries(deltas).forEach(([id, delta]) => {
+      const current = voteTotals[id] ?? totals.find((contestant) => contestant.id === id)?.votes ?? 0;
+      const next = current + delta;
+      setVoteTotals((prev) => ({ ...prev, [id]: next }));
+      patchVoteSeries(id, next);
+    });
+  }
+
+  function patchVoteSeries(id: string, total: number) {
+    const point = { t: Date.now(), value: total };
+    setVoteOverviewSeries((prev) => ({ ...prev, [id]: [...(prev[id] ?? []), point] }));
+    if (metric === "votes") setChartSeries((prev) => ({ ...prev, [id]: [...(prev[id] ?? []), point] }));
+  }
+
+  function syncVoteData() {
+    void loadVotes();
+  }
+
+  const byEquity = useMemo(() => [...contestantsWithVotes].sort((a, b) => a.rank - b.rank), [contestantsWithVotes]);
+  const byVotes = useMemo(() => [...contestantsWithVotes].sort((a, b) => b.votes - a.votes), [contestantsWithVotes]);
+  const chartRows = useMemo(() => chartContestants(contestantsWithVotes, chartSeries, selectedIds, metric, topN), [contestantsWithVotes, chartSeries, selectedIds, metric, topN]);
 
   return (
     <div className="min-h-screen w-full font-sans" style={{ background: CREAM, color: INK }}>
-      <DanmakuStrip comments={comments} contestants={contestants} />
+      <DanmakuStrip comments={comments} contestants={contestantsWithVotes} />
       <main className="grid grid-cols-12 gap-5 p-6 max-lg:grid-cols-1">
         <section className="col-span-8 rounded-2xl border-2 bg-white p-5 max-lg:col-span-1" style={{ borderColor: INK }}>
           <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
@@ -115,7 +150,7 @@ export default function DashboardPage() {
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <Segment value={String(topN)} items={[["8", t("dashboard.top8")], ["10", t("dashboard.top10")], ["20", t("dashboard.top20")]]} onChange={(value) => setTopN(Number(value))} />
-              <ComparePicker contestants={contestants} selected={selectedIds} onChange={(ids) => updateQuery({ ids })} />
+              <ComparePicker contestants={contestantsWithVotes} selected={selectedIds} onChange={(ids) => updateQuery({ ids })} />
               <Segment value={metric} items={[["equity", t("dashboard.equity")], ["votes", t("dashboard.votes")]]} onChange={(value) => { setMetric(value as ChartMetric); updateQuery({ metric: value as ChartMetric }); }} />
               <Segment value={range} items={ranges.map((item) => [item, t(`dashboard.range${item.replace("h", "h").replace("d", "d")}`)] as [string, string])} accent onChange={(value) => { setRange(value as SeriesRange); updateQuery({ range: value as SeriesRange }); }} />
             </div>
@@ -125,7 +160,7 @@ export default function DashboardPage() {
           </div>
           <div className="overflow-x-auto rounded-xl bg-white">
             <div className="h-[360px] min-w-[760px]">
-              <SeriesChart contestants={contestants} series={chartSeries} metric={metric} />
+              <SeriesChart contestants={contestantsWithVotes} series={chartSeries} metric={metric} />
             </div>
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1">
@@ -140,14 +175,14 @@ export default function DashboardPage() {
             <motion.span className="ml-1 h-1.5 w-1.5 rounded-full" style={{ background: ORANGE }} animate={{ opacity: [1, 0.2, 1] }} transition={{ repeat: Infinity, duration: 1.4 }} />
             <span className="ml-auto text-[11px]" style={{ color: "#4A4A4F" }}>{t("dashboard.mentionBonus")}</span>
           </div>
-          <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto px-4 py-3"><CommentList comments={comments.slice(0, 8)} contestants={contestants} /></div>
+          <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto px-4 py-3"><CommentList comments={comments.slice(0, 8)} contestants={contestantsWithVotes} /></div>
           <div className="shrink-0 border-t-2 p-3" style={{ borderColor: "#0C0A0F14" }}>
-            <CommentComposer contestants={contestants} enabled={competition?.status !== "ended" && !!competition?.commentsEnabled} authenticated={isAuthenticated} onLogin={onLogin} onSent={(comment) => setComments((prev) => [comment, ...prev])} status={competition?.status} />
+            <CommentComposer contestants={contestantsWithVotes} enabled={competition?.status !== "ended" && !!competition?.commentsEnabled} authenticated={isAuthenticated} onLogin={onLogin} onSent={(comment, result) => { setComments((prev) => [comment, ...prev]); addVoteDeltas(result.heartsAwarded); syncVoteData(); }} status={competition?.status} />
           </div>
         </aside>
 
         <MagicLeaderboard kind="equity" title={t("dashboard.equityBoard")} caption={t("dashboard.official")} contestants={byEquity.slice(0, 40)} series={equityOverviewSeries} />
-        <MagicLeaderboard kind="votes" title={t("dashboard.voteBoard")} caption={t("dashboard.crowd")} contestants={byVotes.slice(0, 40)} series={voteOverviewSeries} competition={competition} authenticated={isAuthenticated} onLogin={onLogin} onTotal={(id, total) => setContestants((prev) => prev.map((item) => item.id === id ? { ...item, votes: total } : item))} />
+        <MagicLeaderboard kind="votes" title={t("dashboard.voteBoard")} caption={t("dashboard.crowd")} contestants={byVotes.slice(0, 40)} series={voteOverviewSeries} competition={competition} authenticated={isAuthenticated} onLogin={onLogin} onTotal={setVoteTotal} />
       </main>
       <footer className="flex items-center gap-2 px-7 pb-6 text-[11px]" style={{ color: "#4A4A4F" }}><Sparkles size={12} />{t("app.powered")}</footer>
     </div>
@@ -235,6 +270,10 @@ function defaultSeriesIds(contestants: ContestantSummary[], metric: ChartMetric,
     return [...contestants].sort((a, b) => b.votes - a.votes).slice(0, topN).map((c) => c.id);
   }
   return [...contestants].sort((a, b) => a.rank - b.rank).slice(0, topN).map((c) => c.id);
+}
+
+function withVoteTotals(contestants: ContestantSummary[], totals: Record<string, number>) {
+  return contestants.map((contestant) => ({ ...contestant, votes: totals[contestant.id] ?? contestant.votes }));
 }
 
 function formatMoney(value: number) {

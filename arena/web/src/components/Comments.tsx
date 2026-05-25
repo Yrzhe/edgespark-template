@@ -7,7 +7,7 @@ import { Panel } from "@/components/ui";
 import { arenaApi } from "@/lib/api";
 import { INK, NAVY, ORANGE } from "@/lib/constants";
 import { formatDate } from "@/lib/format";
-import type { Comment, CompetitionStatus, ContestantSummary } from "@/lib/types";
+import type { Comment, CommentCreateResponse, CompetitionStatus, ContestantSummary } from "@/lib/types";
 
 export function CommentComposer({
   contestants,
@@ -22,7 +22,7 @@ export function CommentComposer({
   enabled: boolean;
   authenticated: boolean;
   onLogin: () => void;
-  onSent: (comment: Comment) => void;
+  onSent: (comment: Comment, result: CommentCreateResponse) => void;
   defaultText?: string;
   status?: CompetitionStatus;
 }) {
@@ -42,7 +42,7 @@ export function CommentComposer({
     const result = await arenaApi.comment(text.trim());
     const latest = await arenaApi.comments({ limit: 20 });
     const created = latest.comments.find((comment) => comment.id === result.id);
-    if (created) onSent(created);
+    if (created) onSent(created, result);
     setText("");
     setCursor(0);
   }
