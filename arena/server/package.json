@@ -1,0 +1,22 @@
+{
+  "name": "arena-server",
+  "version": "1.0.0",
+  "description": "EdgeSpark user code template for AI coding agents",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.1",
+    "hono": "^4.10.5"
+  },
+  "devDependencies": {
+    "@edgespark/devkit": ">=0.0.1 <1.0.0",
+    "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^3.2.4",
+    "drizzle-kit": "^0.30.6",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

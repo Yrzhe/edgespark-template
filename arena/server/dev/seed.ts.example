@@ -1,0 +1,76 @@
+// server/dev/seed.ts — local-dev data seeding.
+//
+// Rename this file from `seed.ts.example` to `seed.ts` to activate.
+// `edgespark dev` runs the default export once at startup; re-runs on
+// file-content change or `--reset`. Missing file → silent skip; bundle
+// error → log + skip; seed throws → log + skip (sentinel NOT written,
+// next run retries).
+//
+// Lives inside `server/` so drizzle-orm, @edgespark/cli, and your schema
+// all resolve from `server/node_modules` — zero duplicate deps, zero
+// tsconfig path tricks.
+
+import type { SeedContext } from "@edgespark/devkit";
+import type { SqliteRemoteDatabase } from "drizzle-orm/sqlite-proxy";
+import * as schema from "../src/defs/db_schema";
+
+type DB = SqliteRemoteDatabase<typeof schema>;
+
+export default async function seed(_ctx: SeedContext<DB>) {
+  // ── ctx.db ────────────────────────────────────────────────────────────
+  //   Drizzle client against local D1. Every statement round-trips through
+  //   the in-process D1 compat server. Type-safe against your schema.
+  //
+  //   await ctx.db.insert(schema.notes).values({
+  //     body: "seeded",
+  //     createdAt: Date.now(),
+  //   });
+  //
+  //   const rows = await ctx.db.select().from(schema.notes).limit(5);
+  //
+  //   // Seeds should be idempotent. Options:
+  //   await ctx.db
+  //     .insert(schema.notes)
+  //     .values({ id: 1, body: "fixed" })
+  //     .onConflictDoNothing();
+  //   // or rely on `edgespark dev --reset` to wipe state first.
+  //
+  // ── ctx.origin ────────────────────────────────────────────────────────
+  //   Dev proxy origin, e.g. "http://localhost:7775". Use for absolute URL
+  //   construction; ctx.fetch already prepends it for relative paths.
+  //
+  //   const url = `${ctx.origin}/api/public/ping`;
+  //
+  // ── ctx.fetch ─────────────────────────────────────────────────────────
+  //   UNAUTHENTICATED fetch. Relative paths resolve against ctx.origin;
+  //   absolute URLs pass through to their real origin.
+  //
+  //   const pong = await ctx.fetch("/api/public/ping").then((r) => r.json());
+  //
+  //   // External API call — goes to the real origin, no cookies attached.
+  //   const extra = await ctx.fetch("https://api.example.com/data");
+  //
+  // ── ctx.auth.createUser ───────────────────────────────────────────────
+  //   Real Better Auth sign-up + auto-verify. Returns { user, fetch }
+  //   where `fetch` replays session cookies ONLY for ctx.origin (off-
+  //   origin URLs go out cookie-less — local dev session never leaks).
+  //
+  //   const alice = await ctx.auth.createUser({
+  //     email: "alice@local.dev",
+  //     password: "demo-password",
+  //     name: "Alice",
+  //   });
+  //
+  //   // Authenticated call — Alice's session cookie is attached.
+  //   const me = await alice.fetch("/api/me").then((r) => r.json());
+  //
+  //   // Authenticated mutation.
+  //   await alice.fetch("/api/projects", {
+  //     method: "POST",
+  //     headers: { "content-type": "application/json" },
+  //     body: JSON.stringify({ name: "Demo Project" }),
+  //   });
+  //
+  // ──────────────────────────────────────────────────────────────────────
+  // Delete this return and uncomment the patterns above to seed your app.
+}
