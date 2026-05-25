@@ -52,36 +52,40 @@ export function Shell() {
   return (
     <div className="min-h-screen" style={{ background: CREAM, color: INK }}>
       <header className="sticky top-0 z-40 border-b-2 bg-white" style={{ borderColor: INK }}>
-        <div className="mx-auto flex max-w-[1500px] items-center gap-3 px-4 py-3">
-          <NavLink to="/" className="flex items-center gap-2">
-            <span className="grid h-9 w-9 place-items-center rounded-lg" style={{ background: INK }}>
-              <Trophy size={17} color={ORANGE} />
-            </span>
-            <span>
-              <span className="flex items-center gap-1.5 text-base font-black leading-none">{t("app.name")}<Sparkles size={14} color={ORANGE} strokeWidth={2.4} /></span>
-              <span className="block text-[11px] font-semibold text-zinc-500">{t("app.subtitle")}</span>
-            </span>
-          </NavLink>
-          <a href="https://bloome.im" target="_blank" rel="noreferrer" className="hidden items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] font-bold text-zinc-500 hover:bg-zinc-100 sm:flex">
-            <span>{t("app.by")}</span>
-            <img src="/brand/bloome-wordmark-ink.svg" alt={t("app.bloomeAlt")} className="h-4 w-auto" />
-          </a>
-          <nav className="ml-3 hidden items-center gap-1 md:flex">
+        <div className="relative mx-auto flex max-w-[1500px] items-center px-4 py-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <NavLink to="/" className="flex items-center gap-2">
+              <span className="grid h-9 w-9 place-items-center rounded-lg" style={{ background: INK }}>
+                <Trophy size={17} color={ORANGE} />
+              </span>
+              <span>
+                <span className="flex items-center gap-1.5 text-base font-black leading-none">{t("app.name")}<Sparkles size={14} color={ORANGE} strokeWidth={2.4} /></span>
+                <span className="block text-[11px] font-semibold text-zinc-500">{t("app.subtitle")}</span>
+              </span>
+            </NavLink>
+            <a href="https://bloome.im" target="_blank" rel="noreferrer" className="hidden items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] font-bold text-zinc-500 hover:bg-zinc-100 lg:flex">
+              <span>{t("app.by")}</span>
+              <img src="/brand/bloome-wordmark-ink.svg" alt={t("app.bloomeAlt")} className="h-4 w-auto" />
+            </a>
+          </div>
+          <nav className="absolute left-1/2 hidden -translate-x-1/2 items-center gap-1 md:flex">
             {nav.map(([to, label, Icon]) => <HeaderLink key={to} to={to} label={label} icon={<Icon size={15} />} />)}
           </nav>
-          <button className="ml-auto flex items-center gap-1.5 rounded-lg border-2 px-3 py-2 text-sm font-bold" style={{ borderColor: INK }} onClick={() => setLocale(languages.find((lng) => lng !== locale) ?? "en")}>
-            <Languages size={15} />{locale.toUpperCase()}
-          </button>
-          {auth.isAuthenticated ? (
-            <button onClick={() => void auth.signOut()} className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-white" style={{ background: NAVY }}>
-              <Avatar name={me?.displayName ?? auth.user?.name ?? t("app.user")} src={me?.avatarUrl ?? null} size="sm" />
-              <span className="hidden sm:inline">{me?.displayName ?? auth.user?.email ?? t("app.user")}</span>
+          <div className="ml-auto flex items-center gap-3">
+            <button className="flex items-center gap-1.5 rounded-lg border-2 px-3 py-2 text-sm font-bold" style={{ borderColor: INK }} onClick={() => setLocale(languages.find((lng) => lng !== locale) ?? "en")}>
+              <Languages size={15} />{locale.toUpperCase()}
             </button>
-          ) : (
-            <button onClick={() => setLoginOpen(true)} className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-bold text-white" style={{ background: NAVY }}>
-              <LogIn size={15} />{t("app.signIn")}
-            </button>
-          )}
+            {auth.isAuthenticated ? (
+              <button onClick={() => void auth.signOut()} className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-white" style={{ background: NAVY }}>
+                <Avatar name={me?.displayName ?? auth.user?.name ?? t("app.user")} src={me?.avatarUrl ?? null} size="sm" />
+                <span className="hidden sm:inline">{me?.displayName ?? auth.user?.email ?? t("app.user")}</span>
+              </button>
+            ) : (
+              <button onClick={() => setLoginOpen(true)} className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-bold text-white" style={{ background: NAVY }}>
+                <LogIn size={15} />{t("app.signIn")}
+              </button>
+            )}
+          </div>
         </div>
         <nav className="flex gap-1 overflow-x-auto px-3 pb-3 md:hidden">
           {nav.map(([to, label, Icon]) => <HeaderLink key={to} to={to} label={label} icon={<Icon size={15} />} mobile />)}
