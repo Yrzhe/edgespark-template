@@ -134,7 +134,7 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        <aside className="col-span-4 flex h-full min-h-[520px] flex-col rounded-2xl border-2 bg-white max-lg:col-span-1" style={{ borderColor: INK }}>
+        <aside className="col-span-4 flex h-[520px] min-h-0 flex-col rounded-2xl border-2 bg-white max-lg:col-span-1" style={{ borderColor: INK }}>
           <div className="shrink-0 flex items-center gap-2 border-b-2 px-4 py-3" style={{ borderColor: "#0C0A0F14" }}>
             <MessageSquare size={16} color={ORANGE} /><h2 className="font-extrabold">{t("dashboard.comments")}</h2>
             <motion.span className="ml-1 h-1.5 w-1.5 rounded-full" style={{ background: ORANGE }} animate={{ opacity: [1, 0.2, 1] }} transition={{ repeat: Infinity, duration: 1.4 }} />
