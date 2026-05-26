@@ -1,0 +1,8 @@
+# project_id is set by `edgespark init` on first deploy.
+
+[server]
+path = "server"
+
+[web]
+path = "web"
+output_path = "web/dist"

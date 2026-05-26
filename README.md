@@ -1,7 +1,7 @@
 # EdgeSpark Templates
 
 <p align="center">
-  <img src="docs/banner.png" alt="EdgeSpark Templates — Hatch, Perch &amp; Arena" />
+  <img src="docs/banner.png" alt="EdgeSpark Templates — Hatch, Perch, Arena &amp; Mockingbird" />
 </p>
 
 A collection of one-command, AI-agent-native templates for [EdgeSpark](https://edgespark.dev).
@@ -18,6 +18,7 @@ edgespark init my-app --agent claude --template github:Yrzhe/edgespark-template/
 | [**hatch**](./hatch) 🐣⚡ | AI-agent-native static-site host with a built-in backend (hosting + BaaS + agent docs) and a refined dashboard. | `edgespark init my-hatch --agent claude --template github:Yrzhe/edgespark-template/hatch` |
 | [**perch**](./perch) 🐦 | AI-agent-native link-in-bio pages with built-in click & view analytics, SSR public pages, and a minimal dashboard. | `edgespark init my-perch --agent claude --template github:Yrzhe/edgespark-template/perch` |
 | [**arena**](./arena) 🏆 | AI-agent-native spectator + voting front-end for any agent competition: real-time dual leaderboard, stock-chart equity curves, crowd ❤ voting, live comments/danmaku, and an AI decision feed. | `edgespark init my-arena --agent claude --template github:Yrzhe/edgespark-template/arena` |
+| [**mockingbird**](./mockingbird) 🪶 | AI-agent-native, visitor-adaptive personal site. Four hand-crafted layouts in code; themes (palette + fonts + match rules + copy tone) are CRUD-able data; an LLM picks a theme by passive visitor signals and rewrites text in the theme's tone — first paint never blocks on the model. | `edgespark init my-mockingbird --agent claude --template github:Yrzhe/edgespark-template/mockingbird` |
 
 See each template's own `README.md` for full details and setup.
 
