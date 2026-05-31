@@ -1,0 +1,21 @@
+{
+  "name": "magpie-server",
+  "version": "1.0.0",
+  "description": "Magpie — YOUWARE-team brand-materials workbench (server)",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "hono": "^4.10.5",
+    "drizzle-orm": "^0.45.1"
+  },
+  "devDependencies": {
+    "@edgespark/devkit": ">=0.0.1 <1.0.0",
+    "@types/node": "^22.0.0",
+    "drizzle-kit": "^0.30.6",
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.0"
+  }
+}

@@ -1,0 +1,22 @@
+@import "./styles/bloome.css";
+
+* {
+  box-sizing: border-box;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+@media (max-width: 760px) {
+  .magpie-shell-mobile-scroll {
+    min-width: 980px;
+  }
+}

@@ -1,0 +1,1 @@
+ALTER TABLE `assets` ADD `status` text DEFAULT 'ready' NOT NULL;

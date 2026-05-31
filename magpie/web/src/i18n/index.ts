@@ -1,0 +1,209 @@
+import i18next from "i18next";
+import { initReactI18next } from "react-i18next";
+
+const zh = {
+  loading: "正在打开 Magpie...",
+  auth: {
+    loginTitle: "登录 Magpie",
+    loginSubtitle: "请使用 owner 白名单里的账号继续。",
+    domainTitle: "账号不在白名单",
+    domainBody: "Magpie 目前只开放给 owner 白名单里的账号。",
+    pendingTitle: "等待 owner 审批",
+    pendingBody: "你的账号已通过白名单检查，但还需要 owner 签核后才能进入工作台。",
+  },
+  nav: {
+    cards: "卡片",
+    assets: "素材",
+    editor: "编辑器",
+    palette: "调色板",
+    rules: "规则",
+    team: "团队",
+    inbox: "收件箱",
+    admin: "管理",
+  },
+  routes: {
+    coming: "v3.1 即将开放",
+    comingBody: "这块会在 Phase 2 之后接入 owner 管理和写入流程。",
+    noCardTitle: "还没有选择卡片",
+    noCardBody: "从卡片库进入某张卡片后，这里会读取真实卡片并显示编辑画布。",
+    errorTitle: "读取失败",
+  },
+  common: {
+    retry: "重试",
+    language: "语言",
+    close: "关闭",
+  },
+  export: {
+    button: "导出",
+    title: "导出卡片",
+    format: "格式",
+    resolution: "分辨率",
+    transparent: "透明背景",
+    transparentHint: "仅 PNG",
+    download: "下载",
+    exporting: "正在导出…",
+    failed: "导出失败，请重试",
+  },
+  editor: {
+    backToLibrary: "卡片库",
+    tabs: { agent: "智能体", inspector: "属性", rules: "品牌规则" },
+    actions: { saveDraft: "存草稿", saving: "保存中", makeVariant: "派生", publish: "发布" },
+    palette: { label: "主题", canonical: "Bloome 原始配色" },
+    layers: { offCanvas: "在画布外", bringIntoView: "移回画布内", group: "编组", ungroup: "解组", groupHint: "把选中的图层编为一组（Ctrl/Cmd+G）", ungroupHint: "解散选中的组（Ctrl+Shift+G）", selectedCount: "已选 {{count}} 个图层" },
+    inspector: {
+      empty: "选择一个图层查看属性",
+      selected: "选中图层",
+      fontSize: "字号",
+      textAlign: "文字对齐",
+      align: { left: "左对齐", center: "居中", right: "右对齐", justify: "两端对齐" },
+      alignToCanvas: "对齐到画布",
+      canvas: { left: "左", centerH: "水平居中", right: "右", top: "上", middle: "垂直居中", bottom: "下" },
+    },
+  },
+  settings: {
+    title: "设置",
+    email: "邮箱",
+    role: "角色",
+    joined: "加入时间",
+    signOut: "退出登录",
+    ownerShortcuts: "Owner 快捷入口",
+  },
+  admin: {
+    ownerOnlyTitle: "需要 owner 权限",
+    ownerOnlyBody: "这个页面需要 owner 权限。",
+    eyebrow: "Owner observability",
+    title: "事件日志",
+    subtitle: "审计、错误和系统信号会在这里汇总。",
+    refresh: "刷新",
+    level: "级别",
+    code: "代码",
+    codePlaceholder: "按 code 过滤",
+    since: "开始时间",
+    until: "结束时间",
+    limit: "数量",
+    loading: "正在读取事件...",
+    empty: "暂无事件 · 一切正常",
+    noMessage: "无消息",
+    expand: "展开",
+    collapse: "收起",
+    levels: {
+      all: "全部",
+      error: "错误",
+      warn: "警告",
+      info: "信息",
+      audit: "审计",
+    },
+  },
+};
+
+const en = {
+  loading: "Opening Magpie...",
+  auth: {
+    loginTitle: "Sign in to Magpie",
+    loginSubtitle: "Use an owner-whitelisted account to continue.",
+    domainTitle: "Account not whitelisted",
+    domainBody: "Magpie is currently limited to owner-whitelisted accounts.",
+    pendingTitle: "Pending owner approval",
+    pendingBody: "Your account passed the whitelist check, but the owner still needs to approve it.",
+  },
+  nav: {
+    cards: "Cards",
+    assets: "Assets",
+    editor: "Editor",
+    palette: "Palette",
+    rules: "Rules",
+    team: "Team",
+    inbox: "Inbox",
+    admin: "Admin",
+  },
+  routes: {
+    coming: "Coming in v3.1",
+    comingBody: "This area will connect owner management and write flows after Phase 2.",
+    noCardTitle: "No card selected",
+    noCardBody: "Open a card from the library to load the real card into the editor canvas.",
+    errorTitle: "Failed to load",
+  },
+  common: {
+    retry: "Retry",
+    language: "Language",
+    close: "Close",
+  },
+  export: {
+    button: "Export",
+    title: "Export card",
+    format: "Format",
+    resolution: "Resolution",
+    transparent: "Transparent background",
+    transparentHint: "PNG only",
+    download: "Download",
+    exporting: "Exporting…",
+    failed: "Export failed — please retry",
+  },
+  editor: {
+    backToLibrary: "Library",
+    tabs: { agent: "Agent", inspector: "Inspector", rules: "Brand rules" },
+    actions: { saveDraft: "Save draft", saving: "Saving", makeVariant: "Make variant", publish: "Publish" },
+    palette: { label: "Theme", canonical: "Bloome default palette" },
+    layers: { offCanvas: "Off-canvas", bringIntoView: "Bring into view", group: "Group", ungroup: "Ungroup", groupHint: "Group the selected layers (Ctrl/Cmd+G)", ungroupHint: "Ungroup the selection (Ctrl+Shift+G)", selectedCount: "{{count}} layers selected" },
+    inspector: {
+      empty: "Pick a layer to inspect.",
+      selected: "Selected layer",
+      fontSize: "Font size",
+      textAlign: "Text align",
+      align: { left: "Align left", center: "Align center", right: "Align right", justify: "Justify" },
+      alignToCanvas: "Align to canvas",
+      canvas: { left: "Left", centerH: "Center H", right: "Right", top: "Top", middle: "Middle V", bottom: "Bottom" },
+    },
+  },
+  settings: {
+    title: "Settings",
+    email: "Email",
+    role: "Role",
+    joined: "Joined",
+    signOut: "Sign out",
+    ownerShortcuts: "Owner shortcuts",
+  },
+  admin: {
+    ownerOnlyTitle: "Owner access required",
+    ownerOnlyBody: "This page requires owner access.",
+    eyebrow: "Owner observability",
+    title: "Event log",
+    subtitle: "Audits, errors, and system signals roll up here.",
+    refresh: "Refresh",
+    level: "Level",
+    code: "Code",
+    codePlaceholder: "Filter by code",
+    since: "Since",
+    until: "Until",
+    limit: "Limit",
+    loading: "Loading events...",
+    empty: "No events yet · all clear",
+    noMessage: "No message",
+    expand: "Expand",
+    collapse: "Collapse",
+    levels: {
+      all: "All",
+      error: "Error",
+      warn: "Warn",
+      info: "Info",
+      audit: "Audit",
+    },
+  },
+};
+
+const saved = localStorage.getItem("magpie.locale");
+const initialLng = saved === "en" || saved === "zh" ? saved : "zh";
+
+void i18next.use(initReactI18next).init({
+  resources: { zh: { translation: zh }, en: { translation: en } },
+  lng: initialLng,
+  fallbackLng: "zh",
+  interpolation: { escapeValue: false },
+});
+
+export function setLocale(locale: "zh" | "en") {
+  localStorage.setItem("magpie.locale", locale);
+  void i18next.changeLanguage(locale);
+}
+
+export default i18next;

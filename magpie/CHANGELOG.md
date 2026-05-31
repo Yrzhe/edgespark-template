@@ -1,0 +1,106 @@
+# Changelog
+
+All notable changes to Magpie are documented here.
+Format follows [Keep a Changelog](https://keepachangelog.com/); this project is pre-1.0.
+
+## [Unreleased]
+
+### Added
+- Web R9 (assets+brand wave, deploy `c2615c15`):
+  - **M-225 — agent-produced assets now visible.** The client SSE subscriber never registered
+    listeners for the named `tool_call_start` / `tool_call_result` events, so EventSource dropped
+    every produced `assetId`. Now registered + harvested (`resultPreview.assetId`/`assetIds`,
+    deduped) into a **PRODUCED** thumbnail strip in the Agent panel — each thumb click-to-enlarge,
+    draggable to canvas, with an "Add to card" button; pending (async-generating) assets show a
+    spinner and poll until the bytes land in R2. Prod-verified: "generate two coral bird cutouts"
+    → 2 real thumbnails.
+  - **M-226 — Asset Library shows real images.** `AssetItem`/`toAssetItem` never carried
+    `previewUrl`, so tiles drew placeholder art. Now renders real R2-presigned `<img>` thumbnails
+    (onError fallback), each draggable (`ASSET_DRAG_MIME='application/x-magpie-asset'`), with a
+    click-to-enlarge lightbox, "Add to card", and fixed-height + "Load more" pagination.
+  - **M-227 — agent runs survive navigation.** New `src/lib/runStore.ts` persists run ids per
+    card in localStorage; the editor re-fetches + re-subscribes on mount (server replays the full
+    event log), rehydrating steps + produced assets instead of losing in-memory state.
+  - **M-223 — no more JSON for brand rules.** The CardEditor Rules panel rendered active rules as
+    raw JSON `<pre>`; now human-friendly swatches/type/spacing + an "Edit brand rules →" link to
+    the structured `/rules` editor. The `/rules` empty state gains a "Create brand rules" button
+    (`POST /api/public/manage/rules`) so a brand-new team is never stuck input-less.
+  - Correctness: image layers persist a durable `assetId` and re-presign `src` from it at card
+    load (`resolveLayerAssetSrcs`) so a reload no longer breaks the image when the presigned URL
+    expires.
+- Server R6 (agent tool-use): the agent run now really calls tools via OpenAI function
+  calling instead of only returning text. New `src/lib/agent/{tools,openai,loop}.ts` add a
+  6-tool V1 surface — `search_asset`, `describe_asset`, `generate_asset`, `get_brand_rules`,
+  `get_card_layers`, `add_layer_to_card` — driven by a streaming multi-turn loop
+  (`MAX_ITERATIONS=5`) that emits new SSE events `tool_call_start` / `tool_call_result`.
+  `POST /api/public/agent/runs` accepts an optional `cardId`; every tool call is logged to
+  `events` (`code=agent_tool_call`); `generate_asset` cost flows through the existing imagegen
+  ledger; `add_layer_to_card` is creator/owner-gated. +14 tests. Prod curl-verified: the
+  agent chained search→generate, and add_layer really mutated the card (layers 3→4).
+  Known limit: synchronous image-gen inside the background loop can exceed the Worker window
+  (text/search/add_layer paths are unaffected). (`magpie-server-batch-R6-tool-use-report.md`)
+- Web R6 (card export): a toolbar **Export** button in the Card Editor opens a dialog to
+  download the current card as **PNG / JPG / PDF** at **1× / 2× / 4×** of its real
+  resolution (`card.width × card.height`, not the scaled preview), with an optional
+  transparent-background mode for PNG. New `src/lib/export.ts` + `ExportDialog.tsx`;
+  i18n zh/en. Renders via `html-to-image` (SVG foreignObject) rather than html2canvas,
+  because the editor chrome uses `color-mix(in oklab …)` + Tailwind v4 `oklch(…)` that
+  html2canvas's CSS parser cannot handle; PDF embedding via `jsPDF`. The canvas frame is
+  `overflow-hidden`, so the ±80px drag bleed is clipped automatically (Canva-style).
+  Prod-verified: PNG 1×→1080², 2×→2160², PDF opens, transparent corner alpha 0.
+
+### Fixed
+- Web M-070 (agent tool-use unreachable from the UI): both UI run paths — the shell topbar
+  Omnibar (`runOmni`) and the editor Agent panel (`runAgent`) — called
+  `POST /api/public/agent/runs` **without `cardId`**. The server always runs the R6 tool loop,
+  but with `cardId=null` its system prompt instructs the model to refuse ("No card is open…
+  ask them to open one first"), so no tools fired, `card_id` stayed NULL, and no
+  `agent_tool_call` events were logged. Fix (`web/src/App.tsx`): the Omnibar now derives the
+  open card from the `/editor/:cardId` route and the Agent panel passes the open
+  `card.id`; both send `cardId`. Also removed the dead client-side `plan.steps`
+  (`assets.search/copy.draft/compose/rules.check`) that was stored verbatim into `plan_json`
+  and misread as a "legacy step-planner" — rendered steps come from the SSE stream, not the
+  client plan. (`magpie-web-m070-fix-report.md`)
+- Server R5.5 (cost-ledger `todayUsdSpent` double-charge): a single logical compose was
+  charged twice — a premature `worker.compose` row at `POST /api/public/agent/runs` (before
+  any compose happens) plus the real charge at card-save — inflating `todayUsdSpent` 2–3×.
+  The read query (`me.ts`, `sum(cost_micros)/1_000_000`) was always correct. Removed the
+  premature `/runs` charge (kept `checkCost` as a budget pre-gate); compose is now billed
+  exactly once at card-save, where `writeCardComposeCostOnce` dedupes by `cardId`. Added 2
+  regression tests. (`magpie-server-batch-R5.5-report.md`)
+- Web R5 (canvas-editor surgical fixes, `CardEditor.tsx`, per Plume's research):
+  - **(a) Headline line** — the hardcoded fixed-width 120px coral SVG squiggle under
+    every text layer is gone. Replaced by a per-layer `decoration` field (default
+    `none`) rendered with native CSS `text-decoration` (`solid`/`wavy`/`dashed`/
+    `dotted`), which auto-tracks text width. New Inspector "Decoration" dropdown for
+    text layers; field persists across reload (`normalizeLayer`).
+  - **(b) Asymmetric drag clamp** — drag/resize clamped only the lower bound
+    (`max(0)`, no `min`), so elements stuck at left/top but ran off right/bottom.
+    Replaced with a symmetric `clampPos(BLEED=80)` (Canva-style bleed on all four
+    edges; canvas is `overflow-hidden` so export clips to the page).
+  - **(c) Dead opacity slider** — Inspector opacity slider was uncontrolled
+    (`defaultValue`, no handler). Now controlled `value` + `onChange →
+    patchLayer({opacity})`; the layer's `style.opacity` already renders.
+  - **(d) Janky canvas** — every drag/drop/slider tick awaited a network save with a
+    spinner. Now optimistic local commit + 600ms-debounced background persist (no
+    spinner; rapid edits coalesce; flushed on unmount). Added `cursor: grabbing`
+    during drag. (Snap guides / keyboard nudge / undo deferred to R5.5 per the plan.)
+- Web R4 (batch-R4 narrow fixes, web-only):
+  - **A9** Save draft now always shows a toast. Layer autosaves bump the server
+    lockVersion but only updated `cardLockVersionRef`, so the explicit save sent a
+    stale `lockVersion` and 409'd on a branch that refreshed silently. Save now
+    reads the freshest lockVersion, retries once against the server's current
+    version on conflict, and emits a toast on every outcome (success/conflict/cap).
+  - **E12** Agent panel now renders the live SSE stream. The client ignored the
+    server's `stepId`/`label`/`delta` fields and never listened for the `done`
+    event, and runs launched from the shell Omnibar were never handed to the
+    editor panel. Mapped the real event schema, added the `done` listener with
+    per-id dedupe + cost finalize, and bridged Omnibar runs into the panel.
+  - **R3.5** Added-headline cascade offset widened 24px → 48px so three stacked
+    headlines read as distinct rows instead of overlapping.
+
+### Added
+- Scaffold: directory tree + identity files (README, CHANGELOG, edgespark.toml,
+  package.json shells, configs/auth-config.yaml, .gitignore).
+- Architecture spec at `../sources/atelier/synthesis.md` (synthesis of three
+  parallel brainstorms: Awl architect / Loom product-UX / Bobbin wildcard).
