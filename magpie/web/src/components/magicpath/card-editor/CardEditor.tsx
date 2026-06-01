@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ComponentType, ReactNode } from 'react';
-import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Eye, EyeOff, Lock, Unlock, GripVertical, Plus, Layers as LayersIcon, Sparkles, Image as ImageIcon, Type as TypeIcon, Square, Save, Send, GitBranch, Search, ArrowRight, Loader2, CheckCircle2, Coins, Palette as PaletteIcon, History, ShieldCheck, AlertCircle, ArrowUp, ArrowDown, Download, Bot, SlidersHorizontal, AlignLeft, AlignCenter, AlignRight, AlignJustify, Crosshair, Group, Ungroup } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Eye, EyeOff, Lock, Unlock, GripVertical, Plus, Layers as LayersIcon, Sparkles, Image as ImageIcon, Type as TypeIcon, Square, Save, Send, GitBranch, Search, ArrowRight, Loader2, CheckCircle2, Coins, Palette as PaletteIcon, History, ShieldCheck, AlertCircle, ArrowUp, ArrowDown, Download, Bot, SlidersHorizontal, AlignLeft, AlignCenter, AlignRight, AlignJustify, Crosshair, Group, Ungroup, LayoutTemplate } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { ExportDialog, type ExportRequest } from './ExportDialog';
 import { exportCard } from '@/lib/export';
@@ -117,7 +117,20 @@ const LAYER_ICON: Record<LayerKind, ComponentType<{
   text: TypeIcon,
   group: LayersIcon
 };
+type SourcePanel = 'layers' | 'assets' | 'templates' | 'text' | 'ai';
 type RightPanel = 'agent' | 'inspector' | 'rules';
+const SOURCE_NAV_ITEMS: Array<{ id: SourcePanel; icon: ComponentType<{ className?: string }>; labelKey: string }> = [
+  { id: 'layers', icon: LayersIcon, labelKey: 'editor.sourceTabs.layers' },
+  { id: 'assets', icon: ImageIcon, labelKey: 'editor.sourceTabs.assets' },
+  { id: 'templates', icon: LayoutTemplate, labelKey: 'editor.sourceTabs.templates' },
+  { id: 'text', icon: TypeIcon, labelKey: 'editor.sourceTabs.text' },
+  { id: 'ai', icon: Sparkles, labelKey: 'editor.sourceTabs.ai' },
+];
+const RIGHT_PANEL_ITEMS: Array<{ id: RightPanel; icon: ComponentType<{ className?: string }>; labelKey: string }> = [
+  { id: 'agent', icon: Bot, labelKey: 'editor.tabs.agent' },
+  { id: 'inspector', icon: SlidersHorizontal, labelKey: 'editor.tabs.inspector' },
+  { id: 'rules', icon: PaletteIcon, labelKey: 'editor.tabs.rules' },
+];
 export type CardEditorCard = {
   id: string;
   title: string;
@@ -150,8 +163,10 @@ export type AgentRunView = {
   costMicros?: number;
   // Assets the agent produced/selected this run, resolved to thumbnails (M-225). pending =
   // bytes not yet in R2 → loading placeholder.
-  producedAssets?: Array<{ id: string; name?: string | null; previewUrl?: string | null; pending?: boolean; width?: number | null; height?: number | null }>;
+  producedAssets?: EditorSourceAsset[];
 };
+export type EditorSourceAsset = { id: string; name?: string | null; previewUrl?: string | null; pending?: boolean; width?: number | null; height?: number | null };
+type ProducedAsset = EditorSourceAsset;
 export type RuleReport = {
   passed?: boolean;
   pass?: boolean;
@@ -167,6 +182,9 @@ export type CardEditorProps = {
   activePaletteId?: string | null;
   activeRules?: unknown[];
   agentRuns?: AgentRunView[];
+  libraryAssets?: EditorSourceAsset[];
+  libraryAssetsLoading?: boolean;
+  libraryAssetsError?: string | null;
   toast?: string | null;
   saving?: boolean;
   loading?: boolean;
@@ -189,6 +207,9 @@ export const CardEditor = ({
   activePaletteId = null,
   activeRules = [],
   agentRuns = [],
+  libraryAssets = [],
+  libraryAssetsLoading = false,
+  libraryAssetsError = null,
   toast = null,
   saving = false,
   loading = false,
@@ -204,7 +225,8 @@ export const CardEditor = ({
   onPatchLayers,
   onPatchCardMeta
 }: CardEditorProps) => {
-  const [rightPanel, setRightPanel] = useState<RightPanel>('agent');
+  const [sourcePanel, setSourcePanel] = useState<SourcePanel>('layers');
+  const [rightPanel, setRightPanel] = useState<RightPanel>('inspector');
   // R6-editor (4): multi-select. selectedIds is the source of truth; selectedLayer is the
   // "primary" (last-picked) for the Inspector + keyboard ops. setSelectedLayer is kept as a
   // single-select shim so all existing call sites (addText, duplicate, delete, undo) work.
@@ -287,16 +309,18 @@ export const CardEditor = ({
     }
   };
   const toggleVisibility = (id: string) => {
-    setLayers(prev => prev.map(l => l.id === id ? {
+    const next = layers.map(l => l.id === id ? {
       ...l,
       visible: !l.visible
-    } : l));
+    } : l);
+    void commitLayers(next, undefined, id);
   };
   const toggleLock = (id: string) => {
-    setLayers(prev => prev.map(l => l.id === id ? {
+    const next = layers.map(l => l.id === id ? {
       ...l,
       locked: !l.locked
-    } : l));
+    } : l);
+    void commitLayers(next, undefined, id);
   };
   const flushSave = () => {
     if (saveTimerRef.current) {
@@ -482,24 +506,30 @@ export const CardEditor = ({
     setEnteredGroupId(null);
     void commitLayers(next);
   };
-  const addTextLayer = () => {
+  const addTextLayer = (preset: 'headline' | 'subhead' | 'body' = 'headline') => {
     const textCount = layers.filter((layer) => layer.kind === 'text').length;
     // 48px cascade (was 24px) so stacked headlines clear the ~34px text + underline
     // and read as distinct rows instead of piling up. Wraps every 8 via % 8.
     const cascade = textCount % 8;
+    const presetConfig = {
+      headline: { name: t('editor.sourcePanels.text.headlineName'), textValue: t('editor.sourcePanels.text.headlineValue'), fontSize: 34, height: 96, width: 300 },
+      subhead: { name: t('editor.sourcePanels.text.subheadName'), textValue: t('editor.sourcePanels.text.subheadValue'), fontSize: 22, height: 72, width: 280 },
+      body: { name: t('editor.sourcePanels.text.bodyName'), textValue: t('editor.sourcePanels.text.bodyValue'), fontSize: 16, height: 120, width: 260 },
+    }[preset];
     const next: Layer = {
       id: `l_text_${Date.now()}`,
       kind: 'text',
-      name: 'Headline',
-      textValue: 'New headline',
+      name: presetConfig.name,
+      textValue: presetConfig.textValue,
       font: 'Inter 800',
+      fontSize: presetConfig.fontSize,
       opacity: 1,
       visible: true,
       locked: false,
       x: 48 + cascade * 48,
       y: 64 + cascade * 48,
-      width: 300,
-      height: 96,
+      width: presetConfig.width,
+      height: presetConfig.height,
     };
     setSelectedLayer(next.id);
     void commitLayers([next, ...layers], undefined, next.id);
@@ -563,142 +593,406 @@ export const CardEditor = ({
     setSelectedLayer(id);
     patchLayer(id, { x, y });
   };
+  const selectedLayerObject = layers.find(l => l.id === selectedLayer) ?? null;
+  const producedAssets = agentRuns.flatMap((run) => run.producedAssets ?? []);
 
-  return <div className="relative w-full h-dvh overflow-hidden bg-background text-foreground font-sans">
-      <PaperBackdrop />
+  return <div className="relative w-full h-dvh overflow-hidden bg-[#eef0f3] text-[#1a1d24] font-sans text-[13px] select-none">
       <ExportDialog open={exportOpen} exporting={exporting} onClose={() => setExportOpen(false)} onExport={(req) => void handleExport(req)} />
-      {toast && <div className="fixed top-[72px] right-5 z-50 max-w-sm bloome-card-hero px-3.5 py-2.5 text-[12.5px] flex items-start gap-2 shadow-[0_8px_24px_rgba(12,10,15,0.12)]">
+      {toast && <div className="fixed top-[72px] right-5 z-50 max-w-sm rounded-lg border border-[#e4e7ec] bg-white px-3.5 py-2.5 text-[12.5px] flex items-start gap-2 shadow-[0_8px_24px_rgba(20,28,46,0.12)]">
         <span className="mt-1 w-1.5 h-1.5 rounded-full bg-[#F36440] shrink-0" />
         <span className="flex-1 text-[var(--foreground)]">{toast}</span>
       </div>}
 
-      <div className="relative flex flex-col h-full min-h-0">
-        {/* Top bar */}
-        <header className="shrink-0 h-14 flex items-center px-5 gap-3 bg-card/80 backdrop-blur-sm border-b border-[color-mix(in_oklab,#0C0A0F_6%,transparent)]">
-          <button onClick={onBack} className="text-[12px] text-muted-foreground hover:text-foreground inline-flex items-center gap-1">
-            <ChevronLeft className="w-3.5 h-3.5" />
-            {t('editor.backToLibrary')}
-          </button>
-          <span className="text-muted-foreground/40">/</span>
-          <div className="flex items-baseline gap-2 min-w-0">
-            <EditableTitle title={activeCard.title} onSave={(title) => onPatchCardMeta?.({ title })} />
-            <select value={aspectPreset(activeCard.ratio, activeCard.widthPx, activeCard.heightPx)} onChange={(event) => void onPatchCardMeta?.({ ratio: event.target.value })} className="text-[10.5px] text-muted-foreground font-mono px-1.5 py-0.5 rounded bg-muted border border-transparent hover:border-[var(--border-subtle)] outline-none">
-              {ASPECT_PRESETS.map((ratio) => <option key={ratio} value={ratio}>{ratio}</option>)}
-              {aspectPreset(activeCard.ratio, activeCard.widthPx, activeCard.heightPx) === 'Custom' && <option value="Custom">Custom</option>}
-            </select>
-            <span className="text-[10.5px] text-muted-foreground font-mono px-1.5 py-0.5 rounded bg-muted">{activeCard.widthPx}×{activeCard.heightPx}</span>
-            <span className="text-[10px] uppercase tracking-wider font-bold text-[var(--primary)]">● {activeCard.status}</span>
-          </div>
-          <div className="flex-1" />
-          <div className="hidden md:flex items-center gap-3 text-[10.5px] font-mono text-muted-foreground mr-2">
-            <span className="inline-flex items-center gap-1">
-              <Coins className="w-3 h-3" /> $0.04 today
-            </span>
-            <span className="opacity-50">·</span>
-            <label className="inline-flex items-center gap-1" title={t('editor.palette.label')}>
-              <PaletteIcon className="w-3 h-3" />
-              <span className="not-sr-only">{t('editor.palette.label')}</span>
-              <select value={activePaletteId ?? ''} onChange={e => onPaletteChange?.(e.target.value)} className="bg-transparent max-w-[150px] outline-none">
-                <option value="">{t('editor.palette.canonical')}</option>
-                {palettes.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+      <div className="flex h-full min-h-0">
+        <SourceRail value={sourcePanel} onChange={setSourcePanel} />
+        <SourcePanelContent
+          source={sourcePanel}
+          layers={layers}
+          selectedIds={selectedIds}
+          layerBusy={layerBusy}
+          previewBox={previewBox}
+          canGroup={canGroup}
+          canUngroup={canUngroup}
+          dragLayerId={dragLayerId}
+          dropTarget={dropTarget}
+          libraryAssets={libraryAssets}
+          libraryAssetsLoading={libraryAssetsLoading}
+          libraryAssetsError={libraryAssetsError}
+          producedAssets={producedAssets}
+          derivatives={activeDerivatives}
+          onAddTextLayer={addTextLayer}
+          onGroupSelection={groupSelection}
+          onUngroupSelection={ungroupSelection}
+          onSelectLayer={(id, additive) => (additive ? selectLayer(id, true) : setSelectedLayer(id))}
+          onLocate={bringIntoView}
+          onToggleVisibility={toggleVisibility}
+          onToggleLock={toggleLock}
+          onMoveLayer={moveLayer}
+          onDragStartRow={setDragLayerId}
+          onDragOverRow={(id, pos) => setDropTarget((prev) => (prev?.id === id && prev.pos === pos ? prev : { id, pos }))}
+          onDropRow={(id) => { if (dragLayerId) reorderLayer(dragLayerId, id, dropTarget?.pos ?? 'above'); setDragLayerId(null); setDropTarget(null); }}
+          onDragEndRow={() => { setDragLayerId(null); setDropTarget(null); }}
+          onOpenDerivative={onOpenDerivative}
+          onOpenAgent={() => setRightPanel('agent')}
+        />
+
+        <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
+          <header className="flex h-[52px] shrink-0 items-center gap-2 overflow-x-auto overflow-y-hidden border-b border-[#e4e7ec] bg-white px-3 [scrollbar-width:thin] xl:gap-3 xl:px-4">
+            <button onClick={onBack} className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-1.5 py-1 text-[12px] text-[#7a8194] hover:bg-[#f3f4f6] hover:text-[#1a1d24]">
+              <ChevronLeft className="w-3.5 h-3.5 shrink-0" />
+              {t('editor.backToLibrary')}
+            </button>
+            <div className="hidden min-w-0 items-center gap-2 xl:flex">
+              <EditableTitle title={activeCard.title} onSave={(title) => onPatchCardMeta?.({ title })} />
+              <select value={aspectPreset(activeCard.ratio, activeCard.widthPx, activeCard.heightPx)} onChange={(event) => void onPatchCardMeta?.({ ratio: event.target.value })} className="shrink-0 rounded-md border border-transparent bg-[#f3f4f6] px-1.5 py-0.5 text-[10.5px] font-mono text-[#7a8194] outline-none hover:border-[#e4e7ec]">
+                {ASPECT_PRESETS.map((ratio) => <option key={ratio} value={ratio}>{ratio}</option>)}
+                {aspectPreset(activeCard.ratio, activeCard.widthPx, activeCard.heightPx) === 'Custom' && <option value="Custom">Custom</option>}
               </select>
-            </label>
-          </div>
-          <button onClick={() => setExportOpen(true)} className="text-[12px] px-2.5 py-1.5 rounded-md hover:bg-muted text-muted-foreground inline-flex items-center gap-1.5">
-            <Download className="w-3.5 h-3.5" /> {t('export.button')}
-          </button>
-          <button disabled={saving} onClick={onSaveDraft} className="text-[12px] px-2.5 py-1.5 rounded-md hover:bg-muted text-muted-foreground inline-flex items-center gap-1.5 disabled:opacity-50">
-            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} {saving ? t('editor.actions.saving') : t('editor.actions.saveDraft')}
-          </button>
-          <button disabled={saving} onClick={onDerive} className="text-[12px] px-2.5 py-1.5 rounded-md hover:bg-muted text-muted-foreground inline-flex items-center gap-1.5 disabled:opacity-50">
-            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <GitBranch className="w-3.5 h-3.5" />} {t('editor.actions.makeVariant')}
-          </button>
-          <button disabled={saving} onClick={onSaveReady} className="text-[12px] px-3 py-1.5 rounded-md bg-[var(--primary)] text-primary-foreground font-semibold inline-flex items-center gap-1.5 shadow-[0_1px_2px_rgba(12,10,15,0.08)] hover:opacity-90 transition-opacity disabled:opacity-50">
-            <Send className="w-3.5 h-3.5" /> {t('editor.actions.publish')}
-          </button>
-        </header>
-
-        {/* Main 3-column */}
-        <div className="flex-1 flex min-h-0">
-
-          {/* LEFT — Layers panel */}
-          <aside className="w-[240px] shrink-0 flex flex-col bg-background/60 border-r border-[color-mix(in_oklab,#0C0A0F_5%,transparent)]">
-            <div className="px-3 py-2.5 flex items-baseline justify-between">
-              <span className="text-[10.5px] uppercase tracking-[0.18em] font-bold text-muted-foreground inline-flex items-center gap-1.5">
-                <LayersIcon className="w-3 h-3" />
-                Layers
+              <span className="hidden shrink-0 rounded bg-[#f3f4f6] px-1.5 py-0.5 text-[10.5px] font-mono text-[#7a8194] lg:inline">{activeCard.widthPx}×{activeCard.heightPx}</span>
+              <span className="hidden shrink-0 whitespace-nowrap text-[10px] font-bold uppercase tracking-wider text-[#d9532b] xl:inline">● {activeCard.status}</span>
+            </div>
+            <div className="min-w-0 flex-1" />
+            <div className="hidden min-w-0 items-center gap-3 text-[10.5px] font-mono text-[#7a8194] xl:flex">
+              <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap">
+                <Coins className="w-3 h-3 shrink-0" /> $0.04 today
               </span>
-              <button onClick={addTextLayer} className="text-[11px] text-[var(--primary)] hover:underline inline-flex items-center gap-0.5">
-                <Plus className="w-3 h-3" /> add
-              </button>
+              <label className="inline-flex min-w-0 items-center gap-1" title={t('editor.palette.label')}>
+                <PaletteIcon className="w-3 h-3 shrink-0" />
+                <span className="shrink-0 whitespace-nowrap">{t('editor.palette.label')}</span>
+                <select value={activePaletteId ?? ''} onChange={e => onPaletteChange?.(e.target.value)} className="min-w-0 max-w-[150px] bg-transparent outline-none">
+                  <option value="">{t('editor.palette.canonical')}</option>
+                  {palettes.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </label>
             </div>
-            {/* M-083: visible Group / Ungroup (mirrors Ctrl/Cmd+G · Ctrl+Shift+G). Group needs
-                2+ selected; Ungroup needs a grouped layer in the selection. */}
-            <div className="px-2 pb-2 flex items-center gap-1">
-              <button onClick={groupSelection} disabled={!canGroup} title={t('editor.layers.groupHint')} className="flex-1 min-h-8 inline-flex items-center justify-center gap-1 rounded-md border border-[var(--border-subtle)] bg-white text-[11px] font-semibold text-foreground hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed">
-                <Group className="w-3.5 h-3.5" /> {t('editor.layers.group')}
-              </button>
-              <button onClick={ungroupSelection} disabled={!canUngroup} title={t('editor.layers.ungroupHint')} className="flex-1 min-h-8 inline-flex items-center justify-center gap-1 rounded-md border border-[var(--border-subtle)] bg-white text-[11px] font-semibold text-foreground hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed">
-                <Ungroup className="w-3.5 h-3.5" /> {t('editor.layers.ungroup')}
-              </button>
-            </div>
-            {selectedIds.length > 1 && <div className="px-3 pb-1.5 text-[10px] font-mono text-muted-foreground">{t('editor.layers.selectedCount', { count: selectedIds.length })}</div>}
-            <ul className="flex-1 overflow-auto px-1.5 space-y-0.5">
-              {layers.map((l, index) => <LayerRow key={l.id} layer={l} isSelected={selectedIds.includes(l.id)} busy={layerBusy === l.id} canMoveUp={index > 0} canMoveDown={index < layers.length - 1} offCanvas={l.kind !== 'bg' && l.visible && isOffCanvas(resolveBox(l, previewBox.w, previewBox.h), previewBox.w, previewBox.h)} dragging={dragLayerId === l.id} dropPos={dropTarget?.id === l.id ? dropTarget.pos : null} onSelect={(additive) => (additive ? selectLayer(l.id, true) : setSelectedLayer(l.id))} onLocate={() => bringIntoView(l.id)} onToggleVisibility={() => toggleVisibility(l.id)} onToggleLock={() => toggleLock(l.id)} onMoveUp={() => moveLayer(l.id, -1)} onMoveDown={() => moveLayer(l.id, 1)} onDragStartRow={() => setDragLayerId(l.id)} onDragOverRow={(pos) => setDropTarget((prev) => (prev?.id === l.id && prev.pos === pos ? prev : { id: l.id, pos }))} onDropRow={() => { if (dragLayerId) reorderLayer(dragLayerId, l.id, dropTarget?.pos ?? 'above'); setDragLayerId(null); setDropTarget(null); }} onDragEndRow={() => { setDragLayerId(null); setDropTarget(null); }} />)}
-            </ul>
-            <div className="px-3 py-2 text-[10px] text-muted-foreground font-mono border-t border-[color-mix(in_oklab,#0C0A0F_5%,transparent)]">
-              {layers.length} layers · drag to reorder
-            </div>
-          </aside>
+            <button onClick={() => setExportOpen(true)} aria-label={t('export.button')} title={t('export.button')} className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-2 py-1.5 text-[12px] text-[#42485a] hover:bg-[#f3f4f6]">
+              <Download className="w-3.5 h-3.5 shrink-0" /> <span className="whitespace-nowrap max-[1180px]:hidden">{t('export.button')}</span>
+            </button>
+            <button disabled={saving} onClick={onSaveDraft} aria-label={saving ? t('editor.actions.saving') : t('editor.actions.saveDraft')} title={saving ? t('editor.actions.saving') : t('editor.actions.saveDraft')} className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-2 py-1.5 text-[12px] text-[#42485a] hover:bg-[#f3f4f6] disabled:opacity-50">
+              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" /> : <Save className="w-3.5 h-3.5 shrink-0" />} <span className="whitespace-nowrap max-[1180px]:hidden">{saving ? t('editor.actions.saving') : t('editor.actions.saveDraft')}</span>
+            </button>
+            <button disabled={saving} onClick={onDerive} aria-label={t('editor.actions.makeVariant')} title={t('editor.actions.makeVariant')} className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-[#e4e7ec] px-2 py-1.5 text-[12px] text-[#42485a] hover:bg-[#f3f4f6] disabled:opacity-50">
+              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" /> : <GitBranch className="w-3.5 h-3.5 shrink-0" />} <span className="whitespace-nowrap max-[1180px]:hidden">{t('editor.actions.makeVariant')}</span>
+            </button>
+            <button disabled={saving} onClick={onSaveReady} aria-label={t('editor.actions.publish')} title={t('editor.actions.publish')} className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-[#F36440] px-2.5 py-1.5 text-[12px] font-semibold text-white shadow-[0_1px_2px_rgba(20,28,46,0.08)] hover:bg-[#d9532b] disabled:opacity-50">
+              <Send className="w-3.5 h-3.5 shrink-0" /> <span className="whitespace-nowrap max-[1180px]:hidden">{t('editor.actions.publish')}</span>
+            </button>
+          </header>
 
-          {/* CENTER — canvas */}
-          <main className="flex-1 min-w-0 flex flex-col items-center justify-center p-8 overflow-auto bg-[#FAF7F1]">
-            <CanvasFrame layers={layers} ratio={activeCard.ratio} widthPx={activeCard.widthPx} heightPx={activeCard.heightPx} title={activeCard.title} bg={activeCard.bg} fg={activeCard.fg} selectedIds={selectedIds} enteredGroupId={enteredGroupId} onSelectLayer={selectLayer} onEnterGroup={setEnteredGroupId} onMarqueeSelect={setSelectedIds} onPatchLayer={patchLayer} onMultiPatch={patchManyLayers} onLocateLayer={bringIntoView} onAddAssetAt={addAssetLayer} frameRef={canvasFrameRef} />
+          <main className="flex-1 min-w-0 overflow-auto bg-[#eef0f3] p-2 xl:p-8" style={{
+            backgroundImage: 'radial-gradient(circle, #d8dce2 1px, transparent 1px)',
+            backgroundSize: '22px 22px'
+          }}>
+            <div className="flex min-h-full items-center justify-center pb-10">
+              <CanvasFrame layers={layers} ratio={activeCard.ratio} widthPx={activeCard.widthPx} heightPx={activeCard.heightPx} title={activeCard.title} bg={activeCard.bg} fg={activeCard.fg} selectedIds={selectedIds} enteredGroupId={enteredGroupId} onSelectLayer={selectLayer} onEnterGroup={setEnteredGroupId} onMarqueeSelect={setSelectedIds} onPatchLayer={patchLayer} onMultiPatch={patchManyLayers} onLocateLayer={bringIntoView} onAddAssetAt={addAssetLayer} frameRef={canvasFrameRef} />
+            </div>
           </main>
 
-          {/* RIGHT — agent / inspector toggle */}
-          <aside className="w-[340px] shrink-0 flex flex-col bg-card border-l border-[color-mix(in_oklab,#0C0A0F_5%,transparent)]">
-            {/* Tab toggle */}
-            <div className="shrink-0 px-3 pt-3 flex items-center gap-1">
-              <button onClick={() => setRightPanel('agent')} className={`flex-1 min-h-10 text-[11px] px-2 py-1.5 rounded-md inline-flex items-center justify-center gap-1.5 ${rightPanel === 'agent' ? 'bg-[var(--primary)]/[0.08] text-foreground font-semibold' : 'text-muted-foreground hover:bg-muted'}`}>
-                <Bot className="w-3.5 h-3.5 shrink-0" /> {t('editor.tabs.agent')}
-              </button>
-              <button onClick={() => setRightPanel('inspector')} className={`flex-1 min-h-10 text-[11px] px-2 py-1.5 rounded-md inline-flex items-center justify-center gap-1.5 ${rightPanel === 'inspector' ? 'bg-[var(--primary)]/[0.08] text-foreground font-semibold' : 'text-muted-foreground hover:bg-muted'}`}>
-                <SlidersHorizontal className="w-3.5 h-3.5 shrink-0" /> {t('editor.tabs.inspector')}
-              </button>
-              <button onClick={() => setRightPanel('rules')} className={`flex-1 min-h-10 text-[11px] px-2 py-1.5 rounded-md inline-flex items-center justify-center gap-1.5 ${rightPanel === 'rules' ? 'bg-[var(--primary)]/[0.08] text-foreground font-semibold' : 'text-muted-foreground hover:bg-muted'}`}>
-                <PaletteIcon className="w-3.5 h-3.5 shrink-0" /> {t('editor.tabs.rules')}
-              </button>
-            </div>
-
-            {rightPanel === 'agent' ? <AgentPanel input={agentInput} setInput={setAgentInput} runs={agentRuns} onRun={onRunAgent} /> : rightPanel === 'rules' ? <RulesPanel report={activeCard.ruleReport ?? null} rules={activeRules} onSaveDraft={onSaveDraftAfterRules} /> : <InspectorPanel layer={layers.find(l => l.id === selectedLayer) ?? null} canvasW={previewBox.w} canvasH={previewBox.h} onAlign={(patch) => selectedLayer && patchLayer(selectedLayer, patch)} />}
-          </aside>
+          <footer className={`absolute left-0 right-0 bottom-0 z-20 border-t border-[#e4e7ec] bg-white/95 shadow-[0_-8px_24px_rgba(20,28,46,0.08)] transition-all ${derivOpen ? 'h-[200px]' : 'h-6'}`}>
+            <button onClick={() => setDerivOpen(o => !o)} className="flex h-6 w-full items-center gap-2 px-5 text-left hover:bg-[#f3f4f6]">
+              <GitBranch className="w-3.5 h-3.5 shrink-0 text-[#7a8194]" />
+              <span className="shrink-0 whitespace-nowrap text-[10.5px] font-bold uppercase tracking-[0.18em] text-[#7a8194]">{t('editor.variants.title', { count: activeDerivatives.length })}</span>
+              <div className="min-w-0 flex-1" />
+              {derivOpen ? <ChevronDown className="w-3.5 h-3.5 shrink-0 text-[#7a8194]" /> : <ChevronUp className="w-3.5 h-3.5 shrink-0 text-[#7a8194]" />}
+            </button>
+            {derivOpen && <div className="h-[174px] overflow-x-auto px-5 pb-3">
+                <ul className="flex min-w-0 items-stretch gap-2.5">
+                  {activeDerivatives.map(d => <li key={d.id} className="shrink-0"><DerivativeChip d={d} onOpen={() => onOpenDerivative?.(d.id)} /></li>)}
+                  <li className="shrink-0">
+                    <button onClick={onDerive} className="bloome-card flex h-[140px] w-[120px] items-center justify-center border-dashed text-[#7a8194] transition-colors hover:bg-[#f3f4f6] hover:text-[#1a1d24]">
+                      <div className="text-center">
+                        <Plus className="mx-auto w-5 h-5" />
+                        <div className="mt-1 text-[10px] font-mono">{t('editor.variants.deriveNew')}</div>
+                      </div>
+                    </button>
+                  </li>
+                </ul>
+              </div>}
+          </footer>
         </div>
 
-        {/* BOTTOM — derivatives strip */}
-        <footer className={`absolute left-[240px] right-[340px] bottom-0 z-20 border-t border-[color-mix(in_oklab,#0C0A0F_6%,transparent)] bg-card/95 backdrop-blur-sm shadow-[0_-8px_24px_rgba(12,10,15,0.08)] transition-all ${derivOpen ? 'h-[200px]' : 'h-6'}`}>
-          <button onClick={() => setDerivOpen(o => !o)} className="w-full h-6 flex items-center px-5 gap-2 hover:bg-muted/30 text-left">
-            <GitBranch className="w-3.5 h-3.5 text-muted-foreground" />
-            <span className="text-[10.5px] uppercase tracking-[0.18em] font-bold text-muted-foreground">Variants ({activeDerivatives.length})</span>
-            <div className="flex-1" />
-            {derivOpen ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" />}
-          </button>
-          {derivOpen && <div className="px-5 pb-3 overflow-x-auto h-[174px]">
-              <ul className="flex items-stretch gap-2.5 min-w-0">
-                {activeDerivatives.map(d => <li key={d.id} className="shrink-0"><DerivativeChip d={d} onOpen={() => onOpenDerivative?.(d.id)} /></li>)}
-                <li className="shrink-0">
-                  <button onClick={onDerive} className="bloome-card flex items-center justify-center w-[120px] h-[140px] border-dashed text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors">
-                    <div className="text-center">
-                      <Plus className="w-5 h-5 mx-auto" />
-                      <div className="text-[10px] mt-1 font-mono">Derive new</div>
-                    </div>
-                  </button>
-                </li>
-              </ul>
-            </div>}
-        </footer>
+        <aside className="flex w-[284px] shrink-0 flex-col border-l border-[#e4e7ec] bg-white max-[1180px]:w-[260px]">
+          <RightContextHeader panel={rightPanel} layer={selectedLayerObject} selectedCount={selectedIds.length} card={activeCard} />
+          <div className="shrink-0 border-b border-[#eef0f3] px-3 py-2">
+            <div className="flex items-center gap-1 rounded-lg bg-[#f3f4f6] p-0.5">
+              {RIGHT_PANEL_ITEMS.map(({ id, icon: Icon, labelKey }) => <button key={id} onClick={() => setRightPanel(id)} className={`inline-flex min-h-9 flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-[11px] whitespace-nowrap ${rightPanel === id ? 'bg-white text-[#1a1d24] font-semibold shadow-sm' : 'text-[#7a8194] hover:text-[#1a1d24]'}`}>
+                <Icon className="w-3.5 h-3.5 shrink-0" /> {t(labelKey)}
+              </button>)}
+            </div>
+          </div>
+          {rightPanel === 'agent' ? <AgentPanel input={agentInput} setInput={setAgentInput} runs={agentRuns} onRun={onRunAgent} /> : rightPanel === 'rules' ? <RulesPanel report={activeCard.ruleReport ?? null} rules={activeRules} onSaveDraft={onSaveDraftAfterRules} /> : <InspectorPanel layer={selectedLayerObject} canvasW={previewBox.w} canvasH={previewBox.h} onAlign={(patch) => selectedLayer && patchLayer(selectedLayer, patch)} />}
+        </aside>
       </div>
     </div>;
+};
+
+/* ─────────────────────────── Editor v2 shell panels ─────────────────────────── */
+
+const SourceRail = ({ value, onChange }: { value: SourcePanel; onChange: (value: SourcePanel) => void }) => {
+  const { t } = useTranslation();
+  return <nav className="flex w-[60px] shrink-0 flex-col items-center gap-1 border-r border-[#e4e7ec] bg-white py-3">
+    {SOURCE_NAV_ITEMS.map(({ id, icon: Icon, labelKey }) => {
+      const active = value === id;
+      return <button
+        key={id}
+        onClick={() => onChange(id)}
+        aria-label={t(labelKey)}
+        className={`flex w-[48px] shrink-0 flex-col items-center gap-1 rounded-lg py-2 text-[10px] font-medium leading-none transition-colors ${active ? 'bg-[#fdeee9] text-[#d9532b]' : 'text-[#7a8194] hover:bg-[#f3f4f6] hover:text-[#42485a]'}`}
+      >
+        <Icon className="h-[18px] w-[18px] shrink-0" />
+        <span className="shrink-0 whitespace-nowrap">{t(labelKey)}</span>
+      </button>;
+    })}
+  </nav>;
+};
+
+const SourcePanelContent = ({
+  source,
+  layers,
+  selectedIds,
+  layerBusy,
+  previewBox,
+  canGroup,
+  canUngroup,
+  dragLayerId,
+  dropTarget,
+  libraryAssets,
+  libraryAssetsLoading,
+  libraryAssetsError,
+  producedAssets,
+  derivatives,
+  onAddTextLayer,
+  onGroupSelection,
+  onUngroupSelection,
+  onSelectLayer,
+  onLocate,
+  onToggleVisibility,
+  onToggleLock,
+  onMoveLayer,
+  onDragStartRow,
+  onDragOverRow,
+  onDropRow,
+  onDragEndRow,
+  onOpenDerivative,
+  onOpenAgent,
+}: {
+  source: SourcePanel;
+  layers: Layer[];
+  selectedIds: string[];
+  layerBusy: string | null;
+  previewBox: { w: number; h: number };
+  canGroup: boolean;
+  canUngroup: boolean;
+  dragLayerId: string | null;
+  dropTarget: { id: string; pos: 'above' | 'below' } | null;
+  libraryAssets: EditorSourceAsset[];
+  libraryAssetsLoading: boolean;
+  libraryAssetsError: string | null;
+  producedAssets: ProducedAsset[];
+  derivatives: Derivative[];
+  onAddTextLayer: (preset?: 'headline' | 'subhead' | 'body') => void;
+  onGroupSelection: () => void;
+  onUngroupSelection: () => void;
+  onSelectLayer: (id: string, additive: boolean) => void;
+  onLocate: (id: string) => void;
+  onToggleVisibility: (id: string) => void;
+  onToggleLock: (id: string) => void;
+  onMoveLayer: (id: string, direction: -1 | 1) => void;
+  onDragStartRow: (id: string) => void;
+  onDragOverRow: (id: string, pos: 'above' | 'below') => void;
+  onDropRow: (id: string) => void;
+  onDragEndRow: () => void;
+  onOpenDerivative?: (id: string) => void;
+  onOpenAgent: () => void;
+}) => {
+  const { t } = useTranslation();
+  return <aside className="flex w-[264px] shrink-0 flex-col border-r border-[#e4e7ec] bg-white max-[1180px]:w-[236px]">
+    {source === 'layers' && <>
+      <SourcePanelHead title={t('editor.sourceTabs.layers')} count={layers.length} />
+      <div className="px-2 pb-2 pt-2">
+        <button onClick={() => onAddTextLayer('headline')} className="mb-2 flex min-h-9 w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-dashed border-[#d5d9e0] px-3 py-2 text-[12px] font-medium text-[#7a8194] hover:border-[#f3b39c] hover:text-[#d9532b]">
+          <Plus className="h-3.5 w-3.5 shrink-0" /> {t('editor.sourcePanels.layers.add')}
+        </button>
+        <div className="flex items-center gap-1">
+          <button onClick={onGroupSelection} disabled={!canGroup} title={t('editor.layers.groupHint')} className="inline-flex min-h-9 flex-1 items-center justify-center gap-1 whitespace-nowrap rounded-md border border-[#e4e7ec] bg-white px-2 text-[11px] font-semibold text-[#42485a] hover:bg-[#f6f7f9] disabled:cursor-not-allowed disabled:opacity-40">
+            <Group className="h-3.5 w-3.5 shrink-0" /> {t('editor.layers.group')}
+          </button>
+          <button onClick={onUngroupSelection} disabled={!canUngroup} title={t('editor.layers.ungroupHint')} className="inline-flex min-h-9 flex-1 items-center justify-center gap-1 whitespace-nowrap rounded-md border border-[#e4e7ec] bg-white px-2 text-[11px] font-semibold text-[#42485a] hover:bg-[#f6f7f9] disabled:cursor-not-allowed disabled:opacity-40">
+            <Ungroup className="h-3.5 w-3.5 shrink-0" /> {t('editor.layers.ungroup')}
+          </button>
+        </div>
+      </div>
+      {selectedIds.length > 1 && <div className="px-3 pb-1.5 text-[10px] font-mono text-[#7a8194]">{t('editor.layers.selectedCount', { count: selectedIds.length })}</div>}
+      <ul className="flex-1 space-y-0.5 overflow-auto px-1.5">
+        {layers.map((l, index) => <LayerRow
+          key={l.id}
+          layer={l}
+          isSelected={selectedIds.includes(l.id)}
+          busy={layerBusy === l.id}
+          canMoveUp={index > 0}
+          canMoveDown={index < layers.length - 1}
+          offCanvas={l.kind !== 'bg' && l.visible && isOffCanvas(resolveBox(l, previewBox.w, previewBox.h), previewBox.w, previewBox.h)}
+          dragging={dragLayerId === l.id}
+          dropPos={dropTarget?.id === l.id ? dropTarget.pos : null}
+          onSelect={(additive) => onSelectLayer(l.id, additive)}
+          onLocate={() => onLocate(l.id)}
+          onToggleVisibility={() => onToggleVisibility(l.id)}
+          onToggleLock={() => onToggleLock(l.id)}
+          onMoveUp={() => onMoveLayer(l.id, -1)}
+          onMoveDown={() => onMoveLayer(l.id, 1)}
+          onDragStartRow={() => onDragStartRow(l.id)}
+          onDragOverRow={(pos) => onDragOverRow(l.id, pos)}
+          onDropRow={() => onDropRow(l.id)}
+          onDragEndRow={onDragEndRow}
+        />)}
+      </ul>
+      <div className="border-t border-[#eef0f3] px-3 py-2 text-[10px] font-mono text-[#9aa1b1]">
+        {t('editor.sourcePanels.layers.dragHint', { count: layers.length })}
+      </div>
+    </>}
+
+    {source === 'assets' && <AssetsSourcePanel assets={libraryAssets} loading={libraryAssetsLoading} error={libraryAssetsError} onOpenAgent={onOpenAgent} />}
+    {source === 'templates' && <TemplatesSourcePanel derivatives={derivatives} onOpenDerivative={onOpenDerivative} />}
+    {source === 'text' && <TextSourcePanel onAddTextLayer={onAddTextLayer} />}
+    {source === 'ai' && <AISourcePanel assets={producedAssets} onOpenAgent={onOpenAgent} />}
+  </aside>;
+};
+
+const SourcePanelHead = ({ title, count }: { title: string; count?: number }) => <div className="flex items-center justify-between border-b border-[#eef0f3] px-4 py-3">
+  <span className="shrink-0 whitespace-nowrap font-semibold tracking-tight">{title}</span>
+  {count != null && <span className="shrink-0 tabular-nums text-[11px] text-[#9aa1b1]">{count}</span>}
+</div>;
+
+const AssetsSourcePanel = ({ assets, loading, error, onOpenAgent }: { assets: EditorSourceAsset[]; loading: boolean; error: string | null; onOpenAgent: () => void }) => {
+  const { t } = useTranslation();
+  return <>
+    <SourcePanelHead title={t('editor.sourceTabs.assets')} count={loading ? undefined : assets.length} />
+    <div className="flex-1 overflow-auto px-3 py-3">
+      {loading ? <SourceLoading label={t('editor.sourcePanels.assets.loading')} /> : error ? <SourceEmpty
+        icon={<AlertCircle className="h-5 w-5" />}
+        title={t('editor.sourcePanels.assets.error')}
+        body={error}
+        action={t('editor.sourcePanels.assets.openAgent')}
+        onAction={onOpenAgent}
+      /> : assets.length ? <div className="grid grid-cols-2 gap-2.5">
+        {assets.map((asset) => <ProducedAssetSourceTile key={asset.id} asset={asset} />)}
+      </div> : <SourceEmpty
+        icon={<ImageIcon className="h-5 w-5" />}
+        title={t('editor.sourcePanels.assets.emptyTitle')}
+        body={t('editor.sourcePanels.assets.emptyBody')}
+        action={t('editor.sourcePanels.assets.openAgent')}
+        onAction={onOpenAgent}
+      />}
+    </div>
+  </>;
+};
+
+const ProducedAssetSourceTile = ({ asset }: { asset: ProducedAsset }) => {
+  const ready = !!asset.previewUrl && !asset.pending;
+  const { t } = useTranslation();
+  return <div
+    data-editor-asset-id={asset.id}
+    draggable={ready}
+    onDragStart={ready ? (e) => writeAssetDrag(e, { id: asset.id, name: asset.name ?? '', previewUrl: asset.previewUrl, width: asset.width ?? undefined, height: asset.height ?? undefined }) : undefined}
+    className={`group relative aspect-square overflow-hidden rounded-lg border border-[#e4e7ec] bg-[#f7f5f1] ${ready ? 'cursor-grab active:cursor-grabbing' : ''}`}
+    title={asset.name ?? asset.id}
+  >
+    {ready ? <img src={asset.previewUrl ?? undefined} alt={asset.name ?? ''} draggable={false} loading="lazy" className="absolute inset-0 h-full w-full object-contain" onError={(e) => { (e.currentTarget as HTMLImageElement).style.opacity = '0'; }} /> : <div className="absolute inset-0 grid place-items-center text-[10px] text-[#7a8194]"><Loader2 className="mb-1 h-3.5 w-3.5 animate-spin" />{t('editor.sourcePanels.assets.generating')}</div>}
+    {ready && <button onClick={(e) => { e.stopPropagation(); window.dispatchEvent(new CustomEvent('magpie:add-asset-to-card', { detail: { assetId: asset.id, name: asset.name, previewUrl: asset.previewUrl, width: asset.width, height: asset.height } })); }} className="absolute inset-x-1 bottom-1 inline-flex min-h-7 items-center justify-center gap-1 whitespace-nowrap rounded-md bg-[#F36440] px-2 py-1 text-[10px] font-semibold text-white shadow-sm transition-colors hover:bg-[#d9532b]">
+      <Plus className="h-3 w-3 shrink-0" /> {t('editor.sourcePanels.assets.add')}
+    </button>}
+  </div>;
+};
+
+const TemplatesSourcePanel = ({ derivatives, onOpenDerivative }: { derivatives: Derivative[]; onOpenDerivative?: (id: string) => void }) => {
+  const { t } = useTranslation();
+  return <>
+    <SourcePanelHead title={t('editor.sourceTabs.templates')} count={derivatives.length} />
+    <div className="flex-1 overflow-auto px-3 py-3">
+      {derivatives.length ? <div className="grid grid-cols-2 gap-2.5">
+        {derivatives.map((d) => <button key={d.id} onClick={() => onOpenDerivative?.(d.id)} className="group relative aspect-square overflow-hidden rounded-lg border border-[#e4e7ec] text-left hover:bg-[#f6f7f9]" style={{ background: d.bg }}>
+          <div className="absolute inset-0 opacity-90" style={{ background: d.bg }} />
+          <div className="absolute right-3 top-3 h-10 w-10 rounded-full" style={{ background: d.fg }} />
+          <div className="absolute inset-x-2 bottom-2 rounded-md bg-white/95 px-2 py-1 shadow-sm">
+            <div className="truncate text-[11px] font-semibold text-[#1a1d24]">{d.title}</div>
+            <div className="truncate text-[9.5px] font-mono text-[#7a8194]">{d.ratio} · {d.createdAtLabel}</div>
+          </div>
+        </button>)}
+      </div> : <SourceEmpty
+        icon={<LayoutTemplate className="h-5 w-5" />}
+        title={t('editor.sourcePanels.templates.emptyTitle')}
+        body={t('editor.sourcePanels.templates.emptyBody')}
+      />}
+    </div>
+  </>;
+};
+
+const TextSourcePanel = ({ onAddTextLayer }: { onAddTextLayer: (preset?: 'headline' | 'subhead' | 'body') => void }) => {
+  const { t } = useTranslation();
+  const presets: Array<{ id: 'headline' | 'subhead' | 'body'; label: string; className: string }> = [
+    { id: 'headline', label: t('editor.sourcePanels.text.addHeadline'), className: 'text-[20px] font-extrabold' },
+    { id: 'subhead', label: t('editor.sourcePanels.text.addSubhead'), className: 'text-[15px] font-semibold' },
+    { id: 'body', label: t('editor.sourcePanels.text.addBody'), className: 'text-[12px]' },
+  ];
+  return <>
+    <SourcePanelHead title={t('editor.sourceTabs.text')} />
+    <div className="flex flex-col gap-2 p-3">
+      {presets.map((preset) => <button key={preset.id} onClick={() => onAddTextLayer(preset.id)} className="flex min-h-12 items-center justify-between gap-2 rounded-lg border border-[#e4e7ec] px-3 py-3 text-left hover:border-[#f3b39c] hover:bg-[#fdeee9]">
+        <span className={`${preset.className} min-w-0 truncate`}>{preset.label}</span>
+        <Plus className="h-3.5 w-3.5 shrink-0 text-[#9aa1b1]" />
+      </button>)}
+    </div>
+  </>;
+};
+
+const AISourcePanel = ({ assets, onOpenAgent }: { assets: ProducedAsset[]; onOpenAgent: () => void }) => {
+  const { t } = useTranslation();
+  return <>
+    <SourcePanelHead title={t('editor.sourceTabs.ai')} />
+    <div className="flex flex-1 flex-col gap-3 overflow-auto p-3">
+      <div className="rounded-xl border border-[#e4e7ec] p-3 text-[12px] leading-relaxed text-[#42485a]">
+        {t('editor.sourcePanels.ai.body')}
+      </div>
+      <button onClick={onOpenAgent} className="inline-flex min-h-10 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-[#1a1d24] px-3 py-2 text-[12px] font-semibold text-white hover:bg-[#42485a]">
+        <Bot className="h-3.5 w-3.5 shrink-0" /> {t('editor.sourcePanels.ai.openAgent')}
+      </button>
+      {assets.length > 0 && <div>
+        <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[#7a8194]">{t('editor.sourcePanels.ai.outputs', { count: assets.length })}</div>
+        <div className="grid grid-cols-2 gap-2.5">
+          {assets.slice(0, 4).map((asset) => <ProducedAssetSourceTile key={asset.id} asset={asset} />)}
+        </div>
+      </div>}
+    </div>
+  </>;
+};
+
+const SourceEmpty = ({ icon, title, body, action, onAction }: { icon: ReactNode; title: string; body: string; action?: string; onAction?: () => void }) => <div className="flex h-full min-h-[260px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-[#d5d9e0] bg-[#fafbfc] px-4 text-center">
+  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#fdeee9] text-[#d9532b]">{icon}</span>
+  <div className="text-[13px] font-semibold text-[#1a1d24]">{title}</div>
+  <div className="text-[12px] leading-relaxed text-[#7a8194]">{body}</div>
+  {action && <button onClick={onAction} className="mt-1 inline-flex min-h-9 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-[#F36440] px-3 py-2 text-[12px] font-semibold text-white hover:bg-[#d9532b]">{action}</button>}
+</div>;
+
+const SourceLoading = ({ label }: { label: string }) => <div className="flex h-full min-h-[260px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-[#d5d9e0] bg-[#fafbfc] px-4 text-center text-[#7a8194]">
+  <Loader2 className="h-5 w-5 animate-spin text-[#d9532b]" />
+  <span className="shrink-0 whitespace-nowrap text-[12px] font-semibold">{label}</span>
+</div>;
+
+const RightContextHeader = ({ panel, layer, selectedCount, card }: { panel: RightPanel; layer: Layer | null; selectedCount: number; card: CardEditorCard }) => {
+  const { t } = useTranslation();
+  const panelItem = RIGHT_PANEL_ITEMS.find((item) => item.id === panel) ?? RIGHT_PANEL_ITEMS[0];
+  const LayerIcon = layer ? LAYER_ICON[layer.kind] : panelItem.icon;
+  const title = panel === 'inspector'
+    ? selectedCount > 1 ? t('editor.context.multi', { count: selectedCount }) : layer ? t(`editor.context.kind.${layer.kind}`) : t('editor.context.page')
+    : t(panelItem.labelKey);
+  const subtitle = panel === 'inspector'
+    ? selectedCount > 1 ? t('editor.context.groupable') : layer?.name ?? card.ratio
+    : card.title;
+  return <div className="flex min-h-[48px] items-center gap-2 border-b border-[#eef0f3] px-4 py-3">
+    <LayerIcon className={`h-[15px] w-[15px] shrink-0 ${panel === 'inspector' && layer ? 'text-[#d9532b]' : 'text-[#7a8194]'}`} />
+    <span className="shrink-0 whitespace-nowrap font-semibold tracking-tight">{title}</span>
+    <span className="ml-auto min-w-0 truncate text-[11px] text-[#9aa1b1]">{subtitle}</span>
+  </div>;
 };
 
 /* ─────────────────────────── Layer row ─────────────────────────── */
@@ -751,24 +1045,28 @@ const LayerRow = ({
       onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; const r = e.currentTarget.getBoundingClientRect(); onDragOverRow?.(e.clientY < r.top + r.height / 2 ? 'above' : 'below'); }}
       onDrop={(e) => { e.preventDefault(); onDropRow?.(); }}
       onDragEnd={() => onDragEndRow?.()}
-      className={`group relative flex items-center gap-1.5 px-2 py-1.5 rounded-md cursor-pointer transition-colors ${isSelected ? 'bg-[var(--primary)]/[0.08]' : 'hover:bg-muted/60'} ${dragging ? 'opacity-40' : ''}`}>
+      className={`group relative flex min-h-10 items-center gap-1.5 rounded-lg px-2 py-1.5 cursor-pointer transition-colors ${isSelected ? 'bg-[#fdeee9] ring-1 ring-inset ring-[#f3b39c]' : 'hover:bg-[#f6f7f9]'} ${dragging ? 'opacity-40' : ''}`}>
       {/* M-216: drop-position indicator while dragging a row to reorder */}
-      {dropPos && <span className={`absolute left-1 right-1 h-0.5 rounded-full bg-[var(--primary)] ${dropPos === 'above' ? '-top-px' : '-bottom-px'}`} />}
-      <GripVertical className="w-3 h-3 text-muted-foreground/40 shrink-0 cursor-grab" />
-      {/* tiny thumb */}
-      <span className="w-7 h-7 rounded shrink-0 grid place-items-center text-[8px] font-mono" style={{
-      background: layer.thumbBg ?? (layer.kind === 'asset' && layer.thumbFg ? '#F7F5F1' : '#FFFFFF'),
-      color: layer.thumbFg ?? '#0C0A0F',
-      opacity: layer.visible ? 1 : 0.4
-    }}>
-        
-        {layer.kind === 'text' ? 'Aa' : layer.kind === 'asset' ? <Icon className="w-3 h-3" /> : layer.kind === 'group' ? '◇' : null}
-      </span>
+      {dropPos && <span className={`absolute left-1 right-1 h-0.5 rounded-full bg-[#F36440] ${dropPos === 'above' ? '-top-px' : '-bottom-px'}`} />}
+      <GripVertical className="w-3.5 h-3.5 text-[#c2c7d1] shrink-0 cursor-grab" />
+      <button onClick={e => {
+      e.stopPropagation();
+      onToggleVisibility();
+    }} className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-[#7a8194] hover:bg-white" aria-label="Toggle visibility" title="Toggle visibility">
+        {layer.visible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+      </button>
+      <button onClick={e => {
+      e.stopPropagation();
+      onToggleLock();
+    }} className={`grid h-7 w-7 shrink-0 place-items-center rounded-md hover:bg-white ${layer.locked ? 'text-[#d9532b]' : 'text-[#7a8194]/70'}`} aria-label="Toggle lock" title="Toggle lock">
+        {layer.locked ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5 opacity-60 group-hover:opacity-100" />}
+      </button>
+      <Icon className={`w-3.5 h-3.5 shrink-0 ${isSelected ? 'text-[#d9532b]' : 'text-[#9aa1b1]'}`} />
       <div className="flex-1 min-w-0">
-        <div className={`text-[12px] truncate ${isSelected ? 'font-semibold' : 'font-medium'} ${!layer.visible ? 'text-muted-foreground' : ''}`}>
+        <div className={`text-[12px] truncate ${isSelected ? 'font-semibold text-[#1a1d24]' : 'font-medium text-[#42485a]'} ${!layer.visible ? 'text-[#9aa1b1]' : ''}`}>
           {layer.name}
         </div>
-        <div className="text-[9.5px] font-mono text-muted-foreground/80 truncate">
+        <div className="text-[9.5px] font-mono text-[#9aa1b1] truncate">
           {offCanvas ? <span className="text-[var(--accent)] font-semibold">{t('editor.layers.offCanvas')}</span> : <>
             {layer.kind === 'asset' && layer.assetName}
             {layer.kind === 'text' && layer.textValue}
@@ -780,36 +1078,24 @@ const LayerRow = ({
       {offCanvas && <button onClick={e => {
       e.stopPropagation();
       onLocate?.();
-    }} className="p-1 rounded text-[var(--accent)] hover:bg-card" aria-label={t('editor.layers.bringIntoView')} title={t('editor.layers.bringIntoView')}>
+    }} className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-[#d9532b] hover:bg-white" aria-label={t('editor.layers.bringIntoView')} title={t('editor.layers.bringIntoView')}>
         <Crosshair className="w-3.5 h-3.5" />
       </button>}
       {busy && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
-      <button disabled={!canMoveUp} onClick={e => {
-      e.stopPropagation();
-      onMoveUp();
-    }} className="p-0.5 rounded hover:bg-card text-muted-foreground disabled:opacity-30" aria-label="Move layer up">
-        <ArrowUp className="w-3 h-3" />
-      </button>
-      <button disabled={!canMoveDown} onClick={e => {
-      e.stopPropagation();
-      onMoveDown();
-    }} className="p-0.5 rounded hover:bg-card text-muted-foreground disabled:opacity-30" aria-label="Move layer down">
-        <ArrowDown className="w-3 h-3" />
-      </button>
-      <button onClick={e => {
-      e.stopPropagation();
-      onToggleVisibility();
-    }} className="p-0.5 rounded hover:bg-card text-muted-foreground" aria-label="Toggle visibility">
-        
-        {layer.visible ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
-      </button>
-      <button onClick={e => {
-      e.stopPropagation();
-      onToggleLock();
-    }} className={`p-0.5 rounded hover:bg-card ${layer.locked ? 'text-[var(--accent)]' : 'text-muted-foreground/60'}`} aria-label="Toggle lock">
-        
-        {layer.locked ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
-      </button>
+      <div className="ml-auto hidden shrink-0 items-center gap-0.5 group-hover:flex">
+        <button disabled={!canMoveUp} onClick={e => {
+        e.stopPropagation();
+        onMoveUp();
+      }} className="grid h-7 w-7 place-items-center rounded-md text-[#7a8194] hover:bg-white disabled:opacity-30" aria-label="Move layer up">
+          <ArrowUp className="w-3 h-3" />
+        </button>
+        <button disabled={!canMoveDown} onClick={e => {
+        e.stopPropagation();
+        onMoveDown();
+      }} className="grid h-7 w-7 place-items-center rounded-md text-[#7a8194] hover:bg-white disabled:opacity-30" aria-label="Move layer down">
+          <ArrowDown className="w-3 h-3" />
+        </button>
+      </div>
     </li>;
 };
 
@@ -1063,7 +1349,7 @@ const CanvasFrame = ({
           const y = rect ? event.clientY - rect.top : h / 2;
           try { onAddAssetAt(JSON.parse(raw), x, y); } catch { /* ignore malformed payload */ }
         }}
-        className={`relative overflow-hidden bloome-card-hero ${assetDragOver ? 'outline outline-2 outline-dashed outline-[var(--primary)] outline-offset-2' : ''}`} style={{
+        className={`relative overflow-hidden bloome-card-hero ${assetDragOver ? 'outline outline-2 outline-dashed outline-[#F36440] outline-offset-2' : ''}`} style={{
       width: w,
       height: h,
       background: bg
@@ -1198,7 +1484,7 @@ const CanvasFrame = ({
         }
         if (l.kind === 'asset' && l.id === 'l_asset_bird') {
           // matisse bird
-          return <div key={l.id} data-layer-id={l.id} onPointerDown={startDrag} onDoubleClick={() => { if (l.groupId) onEnterGroup(l.groupId); }} className={`absolute ${l.locked ? '' : 'cursor-grab'} ${soloSelected ? 'outline outline-1 outline-[#2556B6]' : ''}`} style={{
+          return <div key={l.id} data-layer-id={l.id} onPointerDown={startDrag} onDoubleClick={() => { if (l.groupId) onEnterGroup(l.groupId); }} className={`absolute ${l.locked ? '' : 'cursor-grab'} ${soloSelected ? 'outline outline-1 outline-[#F36440]' : ''}`} style={{
             left: x,
             top: y,
             width: lw,
@@ -1217,7 +1503,7 @@ const CanvasFrame = ({
           return <EditableTextLayer key={l.id} layer={l} title={title} selected={soloSelected} x={x} y={y} width={lw} height={lh} onPointerDown={startDrag} onResize={startResize} onSave={(value) => onPatchLayer(l.id, { textValue: value })} />;
         }
         if (l.kind === 'asset') {
-          return <div key={l.id} data-layer-id={l.id} onPointerDown={startDrag} onDoubleClick={() => { if (l.groupId) onEnterGroup(l.groupId); }} className={`absolute grid place-items-center ${l.locked ? '' : 'cursor-grab'} ${soloSelected ? 'outline outline-1 outline-[#2556B6]' : ''}`} style={{
+          return <div key={l.id} data-layer-id={l.id} onPointerDown={startDrag} onDoubleClick={() => { if (l.groupId) onEnterGroup(l.groupId); }} className={`absolute grid place-items-center ${l.locked ? '' : 'cursor-grab'} ${soloSelected ? 'outline outline-1 outline-[#F36440]' : ''}`} style={{
             left: x,
             top: y,
             width: lw,
@@ -1249,8 +1535,8 @@ const CanvasFrame = ({
             { id: 'se', cls: '-right-1.5 -bottom-1.5', cursor: 'nwse-resize' },
             { id: 'sw', cls: '-left-1.5 -bottom-1.5', cursor: 'nesw-resize' },
           ];
-          return <div className="absolute border border-dashed border-[#2556B6]" style={{ left: bx, top: by, width: bw, height: bh, pointerEvents: 'none' }}>
-            {corners.map((c) => <span key={c.id} onPointerDown={(e) => startGroupResize(c.id, e)} className={`absolute z-20 w-3 h-3 rounded-full bg-white border border-[#2556B6] shadow-sm ${c.cls}`} style={{ cursor: c.cursor, pointerEvents: 'auto' }} />)}
+          return <div className="absolute border border-dashed border-[#F36440]" style={{ left: bx, top: by, width: bw, height: bh, pointerEvents: 'none' }}>
+            {corners.map((c) => <span key={c.id} onPointerDown={(e) => startGroupResize(c.id, e)} className={`absolute z-20 w-3 h-3 rounded-full bg-white border border-[#F36440] shadow-sm ${c.cls}`} style={{ cursor: c.cursor, pointerEvents: 'auto' }} />)}
           </div>;
         })()}
 
@@ -1259,7 +1545,7 @@ const CanvasFrame = ({
         {guides.y.map((gy, i) => <div key={`gy${i}`} className="absolute left-0 right-0 pointer-events-none" style={{ top: gy, height: 1, background: '#F36440' }} />)}
 
         {/* R6-editor (4): marquee rubber-band */}
-        {marquee && <div className="absolute pointer-events-none border border-[#2556B6] bg-[#2556B6]/10" style={{ left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h }} />}
+        {marquee && <div className="absolute pointer-events-none border border-[#F36440] bg-[#F36440]/10" style={{ left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h }} />}
 
         {/* M-215: off-canvas layers are clipped by the export frame, so we surface a clickable
             marker pinned to the nearest edge (with the layer name). Click = bring it back in. */}
@@ -1324,7 +1610,7 @@ const EditableTextLayer = ({
   // M-083: selection happens in startDrag (pointerdown), exactly like asset layers — a
   // separate onClick=onSelect here re-toggled the just-added shift-selection back off, which
   // is why canvas shift-click multi-select never accumulated for text layers.
-  return <div data-layer-id={layer.id} onPointerDown={editing ? undefined : onPointerDown} onDoubleClick={() => !layer.locked && setEditing(true)} className={`absolute ${layer.locked ? '' : 'cursor-grab'} ${selected ? 'outline outline-1 outline-[#2556B6]' : ''}`} style={{ left: x, top: y, width, height, opacity: layer.opacity, touchAction: 'none' }}>
+  return <div data-layer-id={layer.id} onPointerDown={editing ? undefined : onPointerDown} onDoubleClick={() => !layer.locked && setEditing(true)} className={`absolute ${layer.locked ? '' : 'cursor-grab'} ${selected ? 'outline outline-1 outline-[#F36440]' : ''}`} style={{ left: x, top: y, width, height, opacity: layer.opacity, touchAction: 'none' }}>
     <div ref={ref} contentEditable={editing} suppressContentEditableWarning onBlur={save} onKeyDown={(event) => {
       if (event.key === 'Enter') {
         event.preventDefault();
@@ -1371,7 +1657,7 @@ const ResizeHandles = ({ onResize }: { onResize: (handle: ResizeHandle, event: R
     key={handle.id}
     data-resize-handle={handle.id}
     onPointerDown={(event) => onResize(handle.id, event)}
-    className={`absolute z-20 w-3 h-3 rounded-full bg-white border border-[#2556B6] shadow-sm ${handle.className}`}
+    className={`absolute z-20 w-3 h-3 rounded-full bg-white border border-[#F36440] shadow-sm ${handle.className}`}
     style={{ cursor: handle.cursor }}
   />)}
 </>;
@@ -1530,7 +1816,7 @@ const AgentPanel = ({
       <Search className="w-3.5 h-3.5 ml-1 text-muted-foreground shrink-0" />
       <input value={input} onChange={e => setInput(e.target.value)} placeholder="Ask the agent to add or change…" className="flex-1 bg-transparent text-[13px] focus:outline-none placeholder:text-muted-foreground/70" />
     
-      <button type="submit" className="p-1.5 rounded-md bg-[var(--primary)] text-primary-foreground" aria-label="Run">
+      <button type="submit" className="p-1.5 rounded-md bg-[#F36440] text-primary-foreground" aria-label="Run">
         <ArrowRight className="w-3 h-3" />
       </button>
     </form>
@@ -1546,7 +1832,7 @@ const AgentPanel = ({
       </div>
       {latest.steps && latest.steps.length > 0 && <ul className="px-3 pb-2 space-y-1 text-[11.5px]">
         {latest.steps.slice(0, 8).map((step, index) => <li key={`${step.name}-${index}`} className="grid grid-cols-[14px_1fr_auto] gap-1.5 items-baseline">
-          {step.status === 'running' ? <Loader2 className="w-3 h-3 text-[var(--primary)] animate-spin self-center" /> : step.status === 'error' ? <AlertCircle className="w-3 h-3 text-[var(--destructive)] self-center" /> : <CheckCircle2 className="w-3 h-3 text-[var(--success)] self-center" />}
+          {step.status === 'running' ? <Loader2 className="w-3 h-3 text-[#d9532b] animate-spin self-center" /> : step.status === 'error' ? <AlertCircle className="w-3 h-3 text-[var(--destructive)] self-center" /> : <CheckCircle2 className="w-3 h-3 text-[var(--success)] self-center" />}
           <span><code className="font-mono">{step.name}</code></span>
           <span className="text-[10px] font-mono text-muted-foreground">{step.status === 'running' ? '...' : step.status}</span>
         </li>)}
@@ -1606,7 +1892,7 @@ const ProducedAssetThumb = ({ asset, onZoom }: {
     {ready
       ? <img src={asset.previewUrl ?? undefined} alt={asset.name ?? ''} draggable={false} loading="lazy" className="absolute inset-0 w-full h-full object-contain" onError={(e) => { (e.currentTarget as HTMLImageElement).style.opacity = '0'; }} />
       : <div className="absolute inset-0 grid place-items-center text-[9px] font-mono text-muted-foreground gap-1"><Loader2 className="w-3 h-3 animate-spin" /><span>generating</span></div>}
-    {ready && <button onClick={(e) => { e.stopPropagation(); window.dispatchEvent(new CustomEvent('magpie:add-asset-to-card', { detail: { assetId: asset.id, name: asset.name, previewUrl: asset.previewUrl, width: asset.width, height: asset.height } })); }} title="Add to card" className="absolute bottom-1 left-1 right-1 opacity-0 group-hover:opacity-100 rounded bg-[var(--primary)] text-primary-foreground py-0.5 text-[9px] font-semibold inline-flex items-center justify-center gap-1 transition-opacity">
+    {ready && <button onClick={(e) => { e.stopPropagation(); window.dispatchEvent(new CustomEvent('magpie:add-asset-to-card', { detail: { assetId: asset.id, name: asset.name, previewUrl: asset.previewUrl, width: asset.width, height: asset.height } })); }} title="Add to card" className="absolute bottom-1 left-1 right-1 opacity-0 group-hover:opacity-100 rounded bg-[#F36440] text-primary-foreground py-0.5 text-[9px] font-semibold inline-flex items-center justify-center gap-1 transition-opacity">
       <Plus className="w-2.5 h-2.5" /> Add
     </button>}
   </div>;
@@ -1619,7 +1905,7 @@ const AssetZoom = ({ asset, onClose }: { asset: NonNullable<AgentRunView['produc
       </div>
       <div className="px-4 py-3 flex items-center justify-between gap-3">
         <div className="text-[13px] font-semibold truncate" title={asset.name ?? asset.id}>{asset.name ?? asset.id}</div>
-        <button onClick={() => { window.dispatchEvent(new CustomEvent('magpie:add-asset-to-card', { detail: { assetId: asset.id, name: asset.name, previewUrl: asset.previewUrl, width: asset.width, height: asset.height } })); onClose(); }} className="shrink-0 rounded-md bg-[var(--primary)] text-primary-foreground px-3 py-2 text-[12px] font-semibold inline-flex items-center gap-1.5">
+        <button onClick={() => { window.dispatchEvent(new CustomEvent('magpie:add-asset-to-card', { detail: { assetId: asset.id, name: asset.name, previewUrl: asset.previewUrl, width: asset.width, height: asset.height } })); onClose(); }} className="shrink-0 rounded-md bg-[#F36440] text-primary-foreground px-3 py-2 text-[12px] font-semibold inline-flex items-center gap-1.5">
           <Plus className="w-3.5 h-3.5" /> Add to card
         </button>
       </div>
@@ -1636,7 +1922,7 @@ const RulesPanel = ({ report, rules, onSaveDraft }: { report: RuleReport | null;
         <div className="text-[13px] font-semibold leading-tight mt-0.5">{rules.length} checks loaded</div>
       </div>
       {/* Brand rules are EDITED with the structured editor on /rules — never as JSON here (M-223). */}
-      <a href="/rules" className="shrink-0 text-[11px] font-semibold text-[var(--primary)] hover:underline inline-flex items-center gap-1 mt-0.5">Edit brand rules <ArrowRight className="w-3 h-3" /></a>
+      <a href="/rules" className="shrink-0 text-[11px] font-semibold text-[#d9532b] hover:underline inline-flex items-center gap-1 mt-0.5">Edit brand rules <ArrowRight className="w-3 h-3" /></a>
     </div>
     <div className="bloome-card p-3">
       <div className="flex items-center gap-2">
@@ -1735,10 +2021,10 @@ const InspectorPanel = ({
         </InspectorField>
         {layer.assetName && <InspectorField label="Asset">
             <span className="text-[11.5px] truncate">{layer.assetName}</span>
-            <button className="text-[10.5px] text-[var(--primary)] hover:underline shrink-0">change</button>
+            <button className="text-[10.5px] text-[#d9532b] hover:underline shrink-0">change</button>
           </InspectorField>}
         {layer.textValue && <InspectorField label="Text">
-            <input className="flex-1 bg-card text-[12px] px-2 py-1 rounded-md border border-[color-mix(in_oklab,#0C0A0F_8%,transparent)] focus:outline-none focus:border-[var(--primary)]" defaultValue={layer.textValue.replace(/^"|"$/g, '')} onBlur={(event) => { const v = event.target.value.trim(); if (v && v !== layer.textValue) onAlign?.({ textValue: v }); }} />
+            <input className="flex-1 bg-card text-[12px] px-2 py-1 rounded-md border border-[color-mix(in_oklab,#0C0A0F_8%,transparent)] focus:outline-none focus:border-[#f3b39c]" defaultValue={layer.textValue.replace(/^"|"$/g, '')} onBlur={(event) => { const v = event.target.value.trim(); if (v && v !== layer.textValue) onAlign?.({ textValue: v }); }} />
           </InspectorField>}
         {layer.font && <InspectorField label="Font">
             <select className="bg-card text-[12px] px-2 py-1 rounded-md border border-[color-mix(in_oklab,#0C0A0F_8%,transparent)] font-mono">
@@ -1750,15 +2036,15 @@ const InspectorPanel = ({
           </InspectorField>}
         {/* M-220: font size — live slider + number, both write fontSize (default 34). */}
         {layer.kind === 'text' && <InspectorField label={t('editor.inspector.fontSize')}>
-            <input type="range" min={12} max={120} value={layer.fontSize ?? 34} onChange={(event) => onAlign?.({ fontSize: Number(event.target.value) })} className="flex-1 accent-[var(--primary)]" />
-            <input type="number" min={8} max={400} value={layer.fontSize ?? 34} onChange={(event) => { const n = Number(event.target.value); if (Number.isFinite(n) && n > 0) onAlign?.({ fontSize: Math.round(n) }); }} className="w-12 bg-card text-[11.5px] tabular-nums px-1.5 py-1 rounded-md border border-[color-mix(in_oklab,#0C0A0F_8%,transparent)] focus:outline-none focus:border-[var(--primary)]" />
+            <input type="range" min={12} max={120} value={layer.fontSize ?? 34} onChange={(event) => onAlign?.({ fontSize: Number(event.target.value) })} className="flex-1 accent-[#F36440]" />
+            <input type="number" min={8} max={400} value={layer.fontSize ?? 34} onChange={(event) => { const n = Number(event.target.value); if (Number.isFinite(n) && n > 0) onAlign?.({ fontSize: Math.round(n) }); }} className="w-12 bg-card text-[11.5px] tabular-nums px-1.5 py-1 rounded-md border border-[color-mix(in_oklab,#0C0A0F_8%,transparent)] focus:outline-none focus:border-[#f3b39c]" />
           </InspectorField>}
         {/* M-218: text alignment — left / center / right / justify, writes textAlign. */}
         {layer.kind === 'text' && <InspectorField label={t('editor.inspector.textAlign')}>
             <div className="flex-1 inline-flex rounded-md overflow-hidden border border-[var(--border-subtle)]">
               {TEXT_ALIGNS.map(({ id, Icon }) => {
                 const active = (layer.textAlign ?? 'left') === id;
-                return <button key={id} onClick={() => onAlign?.({ textAlign: id })} aria-label={t(`editor.inspector.align.${id}`)} title={t(`editor.inspector.align.${id}`)} className={`flex-1 min-h-10 grid place-items-center py-1.5 ${active ? 'bg-[var(--primary)] text-primary-foreground' : 'bg-white text-muted-foreground hover:bg-muted'}`}>
+                return <button key={id} onClick={() => onAlign?.({ textAlign: id })} aria-label={t(`editor.inspector.align.${id}`)} title={t(`editor.inspector.align.${id}`)} className={`flex-1 min-h-10 grid place-items-center py-1.5 ${active ? 'bg-[#F36440] text-primary-foreground' : 'bg-white text-muted-foreground hover:bg-muted'}`}>
                   <Icon className="w-3.5 h-3.5" />
                 </button>;
               })}
@@ -1771,7 +2057,7 @@ const InspectorPanel = ({
           </InspectorField>}
         {/* R5 (c): controlled opacity slider — onChange → patchLayer({opacity}); debounced persist keeps it 60fps. */}
         <InspectorField label="Opacity">
-          <input type="range" min={0} max={100} value={Math.round(layer.opacity * 100)} onChange={(event) => onAlign?.({ opacity: Number(event.target.value) / 100 })} className="flex-1 accent-[var(--primary)]" />
+          <input type="range" min={0} max={100} value={Math.round(layer.opacity * 100)} onChange={(event) => onAlign?.({ opacity: Number(event.target.value) / 100 })} className="flex-1 accent-[#F36440]" />
           <span className="text-[11px] font-mono text-muted-foreground tabular-nums w-9 text-right">{Math.round(layer.opacity * 100)}%</span>
         </InspectorField>
         <InspectorField label="Visible">

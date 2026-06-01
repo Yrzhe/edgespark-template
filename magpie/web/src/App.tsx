@@ -3,7 +3,7 @@ import { Outlet, RouterProvider, createBrowserRouter, useLocation, useNavigate, 
 import { useTranslation } from "react-i18next";
 
 import { AssetLibrary, type AssetItem, type AssetKind, type AssetSource, type FolderNode } from "@/components/magicpath/asset-library/AssetLibrary";
-import { CardEditor, type CardEditorCard, type Derivative, type Layer } from "@/components/magicpath/card-editor/CardEditor";
+import { CardEditor, type CardEditorCard, type Derivative, type EditorSourceAsset, type Layer } from "@/components/magicpath/card-editor/CardEditor";
 import { CardLibrary, type CardFamily, type LibraryCard, type Ratio } from "@/components/magicpath/card-library/CardLibrary";
 import MagpieShellV2 from "@/components/magicpath/magpie-shell-v2/MagpieShellV2";
 import { client } from "@/lib/edgespark";
@@ -506,6 +506,14 @@ function EditorRoute() {
   const [assetPollTick, setAssetPollTick] = useState(0);
   const cardLockVersionRef = useRef<number | null>(null);
   useAutoDismissToast(toast, setToast);
+  const assetState = useAsync<{ assets: EditorSourceAsset[] }>(
+    { assets: [] },
+    async () => {
+      const response = await magpieApi.assets.list();
+      return { assets: response.assets.filter((asset) => !asset.deletedAt).map(toEditorSourceAsset) };
+    },
+    [cardId]
+  );
   const state = useAsync<{ card: CardEditorCard | null; derivatives: Derivative[]; palettes: PaletteRow[]; activeRules: unknown[]; detail: CardDetailResponse | null }>(
     { card: null, derivatives: [], palettes: [], activeRules: [], detail: null },
     async () => {
@@ -806,6 +814,9 @@ function EditorRoute() {
     activePaletteId={activePaletteId}
     activeRules={state.data.activeRules}
     agentRuns={runs.map((run) => toAgentRunView(run, assetCache))}
+    libraryAssets={assetState.data.assets}
+    libraryAssetsLoading={assetState.loading}
+    libraryAssetsError={assetState.error}
     toast={toast}
     saving={saving}
     loading={state.loading}
@@ -1586,6 +1597,20 @@ function toAssetItem(row: AssetRow): AssetItem {
     pending: generating,
     width: width || undefined,
     height: height || undefined,
+  };
+}
+
+function toEditorSourceAsset(row: AssetRow): EditorSourceAsset {
+  const width = numeric(row.width, 0);
+  const height = numeric(row.height, 0);
+  const pending = row.status ? row.status === "generating" : (isImageAsset(row) && !row.previewUrl);
+  return {
+    id: row.id,
+    name: row.name ?? "Untitled asset",
+    previewUrl: row.previewUrl ?? null,
+    pending,
+    width: width || null,
+    height: height || null,
   };
 }
 

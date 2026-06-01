@@ -5,6 +5,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); this project is 
 
 ## [Unreleased]
 
+### Changed
+- **Editor v2 — Phase 1 (four-zone redesign, MagicPath spec).** Reworked `CardEditor` +
+  `MagpieShellV2` from the fixed three-tab layout into the four-zone editor: workspace sidebar │
+  60px source rail (图层 / 素材 / 模板 / 文字 / AI) switching the left content panel │ center canvas
+  stage │ 284px right **context container** that still surfaces 智能体 / 属性 / 品牌规则. All prior
+  flows + touchpoints preserved (`frameRef`, `data-card-bg-layer`, `ASSET_DRAG_MIME`,
+  `magpie:add-asset-to-card`, `selectedIds[]`). Independently prod-verified by reviewer (Thistle).
+  - **M-228 — editor 素材 rail wired to assets.** The source-rail Assets panel now fetches the same
+    `GET /api/public/assets` as the global library, renders R2 preview tiles with distinct
+    loading / error / empty / populated states, and reuses the existing add path (drag =
+    `ASSET_DRAG_MIME`, click = `magpie:add-asset-to-card`). Verified: rail tiles 19 == endpoint 19;
+    click-add and drag-add both persist to `cards.card_spec_json` across reload.
+  - **M-230 — layer rows: visibility + lock.** Each layer row shows drag handle + visibility eye +
+    lock + type icon + name + selected state; visibility/lock toggles route through `commitLayers`
+    and persist to `card_spec_json` (verified via PATCH → D1 → reload).
+  - **M-236 — responsive top-bar.** The shell auto-compacts its sidebar at ≤1180px and the editor
+    rails shrink (264/284 → 236/260); toolbar secondary labels collapse to icon buttons with
+    `aria-label`/`title`; the center column clips/scrolls its own toolbar instead of painting over
+    the fixed right context rail. Verified at 1280 / 1024 / 960px — no overlap, no per-glyph CJK wrap.
+
 ### Added
 - Web R9 (assets+brand wave, deploy `c2615c15`):
   - **M-225 — agent-produced assets now visible.** The client SSE subscriber never registered

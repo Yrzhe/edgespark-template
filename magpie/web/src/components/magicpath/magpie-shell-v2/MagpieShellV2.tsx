@@ -596,16 +596,26 @@ export const MagpieShellV2: React.FC<MagpieShellV2Props> = ({
 }) => {
   const [active, setActive] = React.useState<NavId>(initialNav);
   const [collapsed, setCollapsed] = React.useState(false);
+  const [compactViewport, setCompactViewport] = React.useState(false);
   React.useEffect(() => setActive(initialNav), [initialNav]);
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const query = window.matchMedia('(max-width: 1180px)');
+    const sync = () => setCompactViewport(query.matches);
+    sync();
+    query.addEventListener('change', sync);
+    return () => query.removeEventListener('change', sync);
+  }, []);
   const handleSelect = React.useCallback((id: NavId) => {
     setActive(id);
     onNavChange?.(id);
   }, [onNavChange]);
+  const effectiveCollapsed = collapsed || compactViewport;
   return <div className="h-screen w-full flex bg-[#F7F5F1] text-[var(--foreground)] overflow-hidden" style={{
     fontFamily: 'Inter, system-ui'
   }}>
       
-      <Sidebar active={active} onSelect={handleSelect} runtimeStats={runtimeStats} counts={counts} teamCount={teamCount} collapsed={collapsed} onToggleCollapsed={() => setCollapsed((value) => !value)} onSettings={onSettings} isOwner={isOwner} />
+      <Sidebar active={active} onSelect={handleSelect} runtimeStats={runtimeStats} counts={counts} teamCount={teamCount} collapsed={effectiveCollapsed} onToggleCollapsed={() => setCollapsed((value) => !value)} onSettings={onSettings} isOwner={isOwner} />
 
       <div className="flex-1 min-w-0 flex flex-col">
         <Topbar active={active} onOmniSubmit={onOmniSubmit} omniBusy={omniBusy} onNewCard={onNewCard} onNewSession={onNewSession} onSettings={onSettings} onInbox={onInbox} inboxCount={inboxCount} user={user} />
