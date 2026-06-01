@@ -6,6 +6,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); this project is 
 ## [Unreleased]
 
 ### Changed
+- **Editor v2 — Phase 2 (contextual right-inspector, deploy `b7037dc1`).** The right context
+  container's 属性 surface now swaps content by selection; 智能体 / 品牌规则 remain sibling surfaces.
+  Independently prod-verified by reviewer (Thistle) — every image control persists to
+  `card_spec_json`, survives reload, AND affects render (no silent no-ops).
+  - **M-229 — contextual inspector.** No-selection/page → canvas W/H, ratio, background, export
+    defaults; text layer → Transform / Text / Appearance / Effects accordions.
+  - **M-231 — image-layer inspector.** Transform (X/Y/W/H, rotation, lock-ratio) · Image (crop mode,
+    filter, corner radius) · Appearance (opacity, blend) · Effects (shadow, stroke). Layer model
+    gained additive `card_spec_json` fields (`rotation`, `lockRatio`, `blendMode`, `shadow*`,
+    `stroke*`, `cropMode`, `filter`, `cornerRadius`); `normalizeLayer` round-trips them and render
+    applies them (rotation, object-fit, grayscale filter, border-radius, opacity, mix-blend-mode,
+    box-shadow/stroke). `lockRatio` is intentionally inspector-only (constrains W/H edits, not render).
+  - **M-232 — multi-select inspector.** Six-cell align grid (reuses `patchManyLayers`), group/ungroup
+    (reuses `groupSelection`/`ungroupSelection`), and shared opacity across all selected layers — all
+    persisted + reload-verified.
+
 - **Editor v2 — Phase 1 (four-zone redesign, MagicPath spec).** Reworked `CardEditor` +
   `MagpieShellV2` from the fixed three-tab layout into the four-zone editor: workspace sidebar │
   60px source rail (图层 / 素材 / 模板 / 文字 / AI) switching the left content panel │ center canvas

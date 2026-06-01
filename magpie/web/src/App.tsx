@@ -1675,6 +1675,8 @@ function normalizeLayer(input: unknown, card: LibraryCard, index: number): Layer
     // instead of rendering a zero-size (invisible) box that needs a resize/reload.
     width: typeof row.width === "number" && row.width > 0 ? row.width : undefined,
     height: typeof row.height === "number" && row.height > 0 ? row.height : undefined,
+    rotation: typeof row.rotation === "number" ? row.rotation : undefined,
+    lockRatio: row.lockRatio === true ? true : undefined,
     // M-083: persist group membership across reloads (the save path already spreads it).
     groupId: typeof row.groupId === "string" ? row.groupId : undefined,
     // M-220 / M-218: persist per-layer font size + text alignment across reloads.
@@ -1687,6 +1689,24 @@ function normalizeLayer(input: unknown, card: LibraryCard, index: number): Layer
       ? (row.decoration as Layer["decoration"])
       : undefined,
     decorationColor: typeof row.decorationColor === "string" ? row.decorationColor : undefined,
+    blendMode: ["normal", "multiply", "screen", "overlay", "darken", "lighten"].includes(String(row.blendMode))
+      ? (row.blendMode as Layer["blendMode"])
+      : undefined,
+    shadowEnabled: row.shadowEnabled === true ? true : undefined,
+    shadowColor: typeof row.shadowColor === "string" ? row.shadowColor : undefined,
+    shadowBlur: typeof row.shadowBlur === "number" ? row.shadowBlur : undefined,
+    shadowOffsetX: typeof row.shadowOffsetX === "number" ? row.shadowOffsetX : undefined,
+    shadowOffsetY: typeof row.shadowOffsetY === "number" ? row.shadowOffsetY : undefined,
+    strokeEnabled: row.strokeEnabled === true ? true : undefined,
+    strokeColor: typeof row.strokeColor === "string" ? row.strokeColor : undefined,
+    strokeWidth: typeof row.strokeWidth === "number" ? row.strokeWidth : undefined,
+    cropMode: ["contain", "cover", "fill"].includes(String(row.cropMode))
+      ? (row.cropMode as Layer["cropMode"])
+      : undefined,
+    filter: ["none", "warm", "cool", "mono", "high-contrast"].includes(String(row.filter))
+      ? (row.filter as Layer["filter"])
+      : undefined,
+    cornerRadius: typeof row.cornerRadius === "number" ? row.cornerRadius : undefined,
   };
 }
 

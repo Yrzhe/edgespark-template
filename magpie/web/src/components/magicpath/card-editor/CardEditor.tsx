@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ComponentType, ReactNode } from 'react';
-import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Eye, EyeOff, Lock, Unlock, GripVertical, Plus, Layers as LayersIcon, Sparkles, Image as ImageIcon, Type as TypeIcon, Square, Save, Send, GitBranch, Search, ArrowRight, Loader2, CheckCircle2, Coins, Palette as PaletteIcon, History, ShieldCheck, AlertCircle, ArrowUp, ArrowDown, Download, Bot, SlidersHorizontal, AlignLeft, AlignCenter, AlignRight, AlignJustify, Crosshair, Group, Ungroup, LayoutTemplate } from 'lucide-react';
+import type { ComponentType, CSSProperties, ReactNode } from 'react';
+import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Eye, EyeOff, Lock, Unlock, GripVertical, Plus, Layers as LayersIcon, Sparkles, Image as ImageIcon, Type as TypeIcon, Square, Save, Send, GitBranch, Search, ArrowRight, Loader2, CheckCircle2, Coins, Palette as PaletteIcon, History, ShieldCheck, AlertCircle, ArrowUp, ArrowDown, Download, Bot, SlidersHorizontal, AlignLeft, AlignCenter, AlignRight, AlignJustify, Crosshair, Group, Ungroup, LayoutTemplate, RotateCw, Link2, Crop } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { ExportDialog, type ExportRequest } from './ExportDialog';
 import { exportCard } from '@/lib/export';
 import { writeAssetDrag, ASSET_DRAG_MIME } from '@/components/magicpath/asset-library/AssetLibrary';
 export type LayerKind = 'bg' | 'asset' | 'text' | 'group';
 export type TextDecoration = 'none' | 'solid' | 'wavy' | 'dashed' | 'dotted';
+export type BlendMode = 'normal' | 'multiply' | 'screen' | 'overlay' | 'darken' | 'lighten';
+export type ImageFilter = 'none' | 'warm' | 'cool' | 'mono' | 'high-contrast';
+export type CropMode = 'contain' | 'cover' | 'fill';
 export type Layer = {
   id: string;
   kind: LayerKind;
@@ -27,8 +30,22 @@ export type Layer = {
   y?: number;
   width?: number;
   height?: number;
+  rotation?: number;
+  lockRatio?: boolean;
   decoration?: TextDecoration; // text underline style; default 'none'
   decorationColor?: string; // default coral #F36440
+  blendMode?: BlendMode;
+  shadowEnabled?: boolean;
+  shadowColor?: string;
+  shadowBlur?: number;
+  shadowOffsetX?: number;
+  shadowOffsetY?: number;
+  strokeEnabled?: boolean;
+  strokeColor?: string;
+  strokeWidth?: number;
+  cropMode?: CropMode;
+  filter?: ImageFilter;
+  cornerRadius?: number;
   groupId?: string; // R6-editor (4): layers sharing a groupId move/select as a unit
 };
 export type Derivative = {
@@ -720,7 +737,21 @@ export const CardEditor = ({
               </button>)}
             </div>
           </div>
-          {rightPanel === 'agent' ? <AgentPanel input={agentInput} setInput={setAgentInput} runs={agentRuns} onRun={onRunAgent} /> : rightPanel === 'rules' ? <RulesPanel report={activeCard.ruleReport ?? null} rules={activeRules} onSaveDraft={onSaveDraftAfterRules} /> : <InspectorPanel layer={selectedLayerObject} canvasW={previewBox.w} canvasH={previewBox.h} onAlign={(patch) => selectedLayer && patchLayer(selectedLayer, patch)} />}
+          {rightPanel === 'agent' ? <AgentPanel input={agentInput} setInput={setAgentInput} runs={agentRuns} onRun={onRunAgent} /> : rightPanel === 'rules' ? <RulesPanel report={activeCard.ruleReport ?? null} rules={activeRules} onSaveDraft={onSaveDraftAfterRules} /> : <InspectorPanel
+            card={activeCard}
+            layers={layers}
+            selectedIds={selectedIds}
+            layer={selectedLayerObject}
+            canvasW={previewBox.w}
+            canvasH={previewBox.h}
+            canGroup={canGroup}
+            canUngroup={!!canUngroup}
+            onPatchLayer={patchLayer}
+            onPatchManyLayers={patchManyLayers}
+            onGroupSelection={groupSelection}
+            onUngroupSelection={ungroupSelection}
+            onPatchCardMeta={(patch) => void onPatchCardMeta?.(patch)}
+          />}
         </aside>
       </div>
     </div>;
@@ -981,7 +1012,7 @@ const SourceLoading = ({ label }: { label: string }) => <div className="flex h-f
 const RightContextHeader = ({ panel, layer, selectedCount, card }: { panel: RightPanel; layer: Layer | null; selectedCount: number; card: CardEditorCard }) => {
   const { t } = useTranslation();
   const panelItem = RIGHT_PANEL_ITEMS.find((item) => item.id === panel) ?? RIGHT_PANEL_ITEMS[0];
-  const LayerIcon = layer ? LAYER_ICON[layer.kind] : panelItem.icon;
+  const LayerIcon = panel === 'inspector' && selectedCount > 1 ? Group : layer ? LAYER_ICON[layer.kind] : panelItem.icon;
   const title = panel === 'inspector'
     ? selectedCount > 1 ? t('editor.context.multi', { count: selectedCount }) : layer ? t(`editor.context.kind.${layer.kind}`) : t('editor.context.page')
     : t(panelItem.labelKey);
@@ -1128,6 +1159,52 @@ const EditableTitle = ({ title, onSave }: { title: string; onSave?: (title: stri
 };
 
 /* ─────────────────────────── Canvas ─────────────────────────── */
+
+const layerRotation = (layer: Layer) => Number.isFinite(layer.rotation) ? Number(layer.rotation) : 0;
+
+const frameVisualStyle = (layer: Layer): CSSProperties => ({
+  opacity: layer.opacity,
+  mixBlendMode: layer.blendMode && layer.blendMode !== 'normal' ? layer.blendMode : undefined,
+  ...(layerRotation(layer) ? { rotate: `${layerRotation(layer)}deg`, transformOrigin: 'center' } : {}),
+}) as CSSProperties;
+
+const layerShadow = (layer: Layer) => {
+  if (!layer.shadowEnabled) return null;
+  const x = layer.shadowOffsetX ?? 0;
+  const y = layer.shadowOffsetY ?? 8;
+  const blur = layer.shadowBlur ?? 18;
+  const color = layer.shadowColor ?? 'rgba(20,28,46,0.24)';
+  return `${x}px ${y}px ${blur}px ${color}`;
+};
+
+const layerStrokeShadow = (layer: Layer) => {
+  if (!layer.strokeEnabled) return null;
+  const width = Math.max(1, layer.strokeWidth ?? 2);
+  const color = layer.strokeColor ?? '#F36440';
+  return `0 0 0 ${width}px ${color}`;
+};
+
+const imageLayerStyle = (layer: Layer): CSSProperties => {
+  const shadows = [layerShadow(layer), layerStrokeShadow(layer)].filter(Boolean).join(', ');
+  return {
+    borderRadius: layer.cornerRadius ? `${layer.cornerRadius}px` : undefined,
+    boxShadow: shadows || undefined,
+    overflow: layer.cornerRadius ? 'hidden' : undefined,
+  };
+};
+
+const imageFilterStyle = (filter: ImageFilter | undefined): string | undefined => {
+  if (filter === 'warm') return 'saturate(1.08) sepia(0.16)';
+  if (filter === 'cool') return 'saturate(1.05) hue-rotate(10deg)';
+  if (filter === 'mono') return 'grayscale(1)';
+  if (filter === 'high-contrast') return 'contrast(1.18) saturate(1.12)';
+  return undefined;
+};
+
+const textEffectStyle = (layer: Layer): CSSProperties => ({
+  textShadow: layerShadow(layer) ?? undefined,
+  ...(layer.strokeEnabled ? { WebkitTextStroke: `${Math.max(1, layer.strokeWidth ?? 1)}px ${layer.strokeColor ?? '#F36440'}` } : {}),
+}) as CSSProperties;
 
 const CanvasFrame = ({
   layers,
@@ -1474,7 +1551,7 @@ const CanvasFrame = ({
         if (l.kind === 'asset' && l.id === 'l_asset_b') {
           // big light B watermark
           return <div key={l.id} className="absolute inset-0 flex items-end justify-center" style={{
-            opacity: l.opacity
+            ...frameVisualStyle(l)
           }}>
                 <span className="text-[500px] font-[900] leading-[0.8] text-white" style={{
               fontFamily: 'Inter, sans-serif',
@@ -1489,7 +1566,8 @@ const CanvasFrame = ({
             top: y,
             width: lw,
             height: lh,
-            opacity: l.opacity,
+            ...frameVisualStyle(l),
+            ...imageLayerStyle(l),
             touchAction: 'none'
           }}>
             <svg viewBox="0 0 200 200" className="w-full h-full" aria-hidden>
@@ -1508,12 +1586,13 @@ const CanvasFrame = ({
             top: y,
             width: lw,
             height: lh,
-            opacity: l.opacity,
+            ...frameVisualStyle(l),
+            ...imageLayerStyle(l),
             touchAction: 'none'
           }}>
               {/* M-225/226: real asset image (presigned previewUrl) when present, else placeholder. */}
               {l.src
-                ? <img src={l.src} alt={l.name} draggable={false} className="absolute inset-0 w-full h-full object-contain pointer-events-none" style={{ outline: '1px solid rgba(0,0,0,0.1)' }} onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
+                ? <img src={l.src} alt={l.name} draggable={false} className="absolute inset-0 w-full h-full pointer-events-none" style={{ outline: '1px solid rgba(0,0,0,0.1)', objectFit: l.cropMode ?? 'contain', filter: imageFilterStyle(l.filter), borderRadius: l.cornerRadius ? `${l.cornerRadius}px` : undefined }} onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
                 : <ImageIcon className="w-10 h-10 text-white/80" />}
               {soloSelected && <ResizeHandles onResize={startResize} />}
               </div>;
@@ -1610,7 +1689,7 @@ const EditableTextLayer = ({
   // M-083: selection happens in startDrag (pointerdown), exactly like asset layers — a
   // separate onClick=onSelect here re-toggled the just-added shift-selection back off, which
   // is why canvas shift-click multi-select never accumulated for text layers.
-  return <div data-layer-id={layer.id} onPointerDown={editing ? undefined : onPointerDown} onDoubleClick={() => !layer.locked && setEditing(true)} className={`absolute ${layer.locked ? '' : 'cursor-grab'} ${selected ? 'outline outline-1 outline-[#F36440]' : ''}`} style={{ left: x, top: y, width, height, opacity: layer.opacity, touchAction: 'none' }}>
+  return <div data-layer-id={layer.id} onPointerDown={editing ? undefined : onPointerDown} onDoubleClick={() => !layer.locked && setEditing(true)} className={`absolute ${layer.locked ? '' : 'cursor-grab'} ${selected ? 'outline outline-1 outline-[#F36440]' : ''}`} style={{ left: x, top: y, width, height, ...frameVisualStyle(layer), touchAction: 'none' }}>
     <div ref={ref} contentEditable={editing} suppressContentEditableWarning onBlur={save} onKeyDown={(event) => {
       if (event.key === 'Enter') {
         event.preventDefault();
@@ -1632,6 +1711,7 @@ const EditableTextLayer = ({
       textDecorationColor: layer.decorationColor ?? '#F36440',
       textDecorationThickness: '2.5px',
       textUnderlineOffset: '6px',
+      ...textEffectStyle(layer),
     }}>
       {value}
     </div>
@@ -1980,138 +2060,321 @@ const TEXT_ALIGNS: Array<{ id: NonNullable<Layer['textAlign']>; Icon: ComponentT
   { id: 'right', Icon: AlignRight },
   { id: 'justify', Icon: AlignJustify },
 ];
+const BLEND_OPTIONS: BlendMode[] = ['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten'];
+const IMAGE_FILTER_OPTIONS: ImageFilter[] = ['none', 'warm', 'cool', 'mono', 'high-contrast'];
+const CROP_OPTIONS: CropMode[] = ['contain', 'cover', 'fill'];
 
 const InspectorPanel = ({
+  card,
+  layers,
+  selectedIds,
   layer,
   canvasW,
   canvasH,
-  onAlign
+  canGroup,
+  canUngroup,
+  onPatchLayer,
+  onPatchManyLayers,
+  onGroupSelection,
+  onUngroupSelection,
+  onPatchCardMeta,
 }: {
+  card: CardEditorCard;
+  layers: Layer[];
+  selectedIds: string[];
   layer: Layer | null;
   canvasW: number;
   canvasH: number;
-  onAlign?: (patch: Partial<Layer>) => void;
+  canGroup: boolean;
+  canUngroup: boolean;
+  onPatchLayer: (id: string, patch: Partial<Layer>, title?: string) => void;
+  onPatchManyLayers: (patches: Record<string, Partial<Layer>>) => void;
+  onGroupSelection: () => void;
+  onUngroupSelection: () => void;
+  onPatchCardMeta?: (patch: { title?: string; ratio?: string }) => void;
+}) => {
+  const selectedLayers = selectedIds.map((id) => layers.find((item) => item.id === id)).filter(Boolean) as Layer[];
+  if (selectedLayers.length > 1) {
+    return <MultiLayerInspector
+      layers={selectedLayers}
+      canvasW={canvasW}
+      canvasH={canvasH}
+      canGroup={canGroup}
+      canUngroup={canUngroup}
+      onPatchManyLayers={onPatchManyLayers}
+      onGroupSelection={onGroupSelection}
+      onUngroupSelection={onUngroupSelection}
+    />;
+  }
+  if (layer?.kind === 'text') {
+    return <TextLayerInspector layer={layer} canvasW={canvasW} canvasH={canvasH} onPatch={(patch) => onPatchLayer(layer.id, patch)} />;
+  }
+  if (layer?.kind === 'asset') {
+    return <ImageLayerInspector layer={layer} canvasW={canvasW} canvasH={canvasH} onPatch={(patch) => onPatchLayer(layer.id, patch)} />;
+  }
+  return <PageInspector card={card} onPatchCardMeta={onPatchCardMeta} />;
+};
+
+const TextLayerInspector = ({ layer, canvasW, canvasH, onPatch }: { layer: Layer; canvasW: number; canvasH: number; onPatch: (patch: Partial<Layer>) => void }) => {
+  const { t } = useTranslation();
+  return <InspectorScroll>
+    <TransformAccordion layer={layer} canvasW={canvasW} canvasH={canvasH} onPatch={onPatch} />
+    <InspectorAccordion title={t('editor.inspector.sections.text')} defaultOpen>
+      <FieldLabel label={t('editor.inspector.fields.text')}>
+        <input className={fieldInputClass} defaultValue={(layer.textValue ?? '').replace(/^"|"$/g, '')} onBlur={(event) => {
+          const value = event.currentTarget.value.trim();
+          if (value && value !== layer.textValue) onPatch({ textValue: value });
+        }} />
+      </FieldLabel>
+      <SelectField label={t('editor.inspector.fields.font')} value={layer.font ?? 'Inter 800'} options={['Inter 800', 'Inter 600', 'Inter 400', 'JetBrains Mono 500'].map((id) => ({ id, label: id }))} onChange={(value) => onPatch({ font: value })} />
+      <SliderField label={t('editor.inspector.fontSize')} min={8} max={160} value={layer.fontSize ?? 34} onChange={(value) => onPatch({ fontSize: value })} />
+      <div>
+        <div className={fieldLabelClass}>{t('editor.inspector.textAlign')}</div>
+        <div className="inline-flex w-full overflow-hidden rounded-md border border-[#e4e7ec] bg-white">
+          {TEXT_ALIGNS.map(({ id, Icon }) => {
+            const active = (layer.textAlign ?? 'left') === id;
+            return <button key={id} onClick={() => onPatch({ textAlign: id })} aria-label={t(`editor.inspector.align.${id}`)} title={t(`editor.inspector.align.${id}`)} className={`grid min-h-9 flex-1 shrink-0 place-items-center whitespace-nowrap px-2 py-1.5 ${active ? 'bg-[#F36440] text-white' : 'text-[#7a8194] hover:bg-[#f6f7f9]'}`}>
+              <Icon className="h-3.5 w-3.5 shrink-0" />
+            </button>;
+          })}
+        </div>
+      </div>
+      <SelectField label={t('editor.inspector.fields.decoration')} value={layer.decoration ?? 'none'} options={( ['none', 'solid', 'wavy', 'dashed', 'dotted'] as TextDecoration[]).map((id) => ({ id, label: t(`editor.inspector.decoration.${id}`) }))} onChange={(value) => onPatch({ decoration: value as TextDecoration })} />
+    </InspectorAccordion>
+    <AppearanceAccordion layer={layer} onPatch={onPatch} />
+    <EffectsAccordion layer={layer} onPatch={onPatch} />
+  </InspectorScroll>;
+};
+
+const ImageLayerInspector = ({ layer, canvasW, canvasH, onPatch }: { layer: Layer; canvasW: number; canvasH: number; onPatch: (patch: Partial<Layer>) => void }) => {
+  const { t } = useTranslation();
+  const currentCrop = layer.cropMode ?? 'contain';
+  const nextCrop = CROP_OPTIONS[(CROP_OPTIONS.indexOf(currentCrop) + 1) % CROP_OPTIONS.length];
+  return <InspectorScroll>
+    <TransformAccordion layer={layer} canvasW={canvasW} canvasH={canvasH} onPatch={onPatch} />
+    <InspectorAccordion title={t('editor.inspector.sections.image')} defaultOpen>
+      <button onClick={() => onPatch({ cropMode: nextCrop })} className="inline-flex min-h-9 w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-[#e4e7ec] bg-white px-2 py-2 text-[12px] font-semibold text-[#42485a] hover:bg-[#f6f7f9]">
+        <Crop className="h-3.5 w-3.5 shrink-0" /> {t('editor.inspector.image.crop')} · {t(`editor.inspector.crop.${currentCrop}`)}
+      </button>
+      <SelectField label={t('editor.inspector.fields.filter')} value={layer.filter ?? 'none'} options={IMAGE_FILTER_OPTIONS.map((id) => ({ id, label: t(`editor.inspector.filter.${id}`) }))} onChange={(value) => onPatch({ filter: value as ImageFilter })} />
+      <SliderField label={t('editor.inspector.fields.cornerRadius')} min={0} max={96} value={layer.cornerRadius ?? 0} onChange={(value) => onPatch({ cornerRadius: value })} suffix="px" />
+    </InspectorAccordion>
+    <AppearanceAccordion layer={layer} onPatch={onPatch} />
+    <EffectsAccordion layer={layer} onPatch={onPatch} />
+  </InspectorScroll>;
+};
+
+const MultiLayerInspector = ({
+  layers,
+  canvasW,
+  canvasH,
+  canGroup,
+  canUngroup,
+  onPatchManyLayers,
+  onGroupSelection,
+  onUngroupSelection,
+}: {
+  layers: Layer[];
+  canvasW: number;
+  canvasH: number;
+  canGroup: boolean;
+  canUngroup: boolean;
+  onPatchManyLayers: (patches: Record<string, Partial<Layer>>) => void;
+  onGroupSelection: () => void;
+  onUngroupSelection: () => void;
 }) => {
   const { t } = useTranslation();
-  // M-219: align the selected layer to the canvas (replaces the confusing fixed-px presets).
-  // Uses the layer's resolved box so each edge/centre lands exactly on the page rect.
-  const alignToCanvas = (axis: 'x' | 'y', where: 'start' | 'center' | 'end') => {
-    if (!layer) return;
-    const box = resolveBox(layer, canvasW, canvasH);
-    if (axis === 'x') {
-      const x = where === 'start' ? 0 : where === 'center' ? Math.round((canvasW - box.w) / 2) : Math.round(canvasW - box.w);
-      onAlign?.({ x });
-    } else {
-      const y = where === 'start' ? 0 : where === 'center' ? Math.round((canvasH - box.h) / 2) : Math.round(canvasH - box.h);
-      onAlign?.({ y });
-    }
+  const editable = layers.filter((item) => !item.locked && item.kind !== 'bg');
+  const opacity = editable.length ? Math.round((editable.reduce((sum, item) => sum + item.opacity, 0) / editable.length) * 100) : 100;
+  const alignSelection = (axis: 'x' | 'y', where: 'start' | 'center' | 'end') => {
+    const boxes = editable.map((item) => ({ layer: item, box: resolveBox(item, canvasW, canvasH) }));
+    if (!boxes.length) return;
+    const left = Math.min(...boxes.map(({ box }) => box.x));
+    const top = Math.min(...boxes.map(({ box }) => box.y));
+    const right = Math.max(...boxes.map(({ box }) => box.x + box.w));
+    const bottom = Math.max(...boxes.map(({ box }) => box.y + box.h));
+    const groupW = right - left;
+    const groupH = bottom - top;
+    const dx = axis === 'x'
+      ? (where === 'start' ? -left : where === 'center' ? Math.round((canvasW - groupW) / 2 - left) : Math.round(canvasW - right))
+      : 0;
+    const dy = axis === 'y'
+      ? (where === 'start' ? -top : where === 'center' ? Math.round((canvasH - groupH) / 2 - top) : Math.round(canvasH - bottom))
+      : 0;
+    const patches: Record<string, Partial<Layer>> = {};
+    for (const { layer: item, box } of boxes) patches[item.id] = { x: Math.round(box.x + dx), y: Math.round(box.y + dy) };
+    onPatchManyLayers(patches);
   };
-  const alignBtn = "min-h-10 rounded-md bg-white border border-[var(--border-subtle)] inline-flex items-center justify-center gap-1 px-2 py-1.5 text-[10.5px] font-semibold text-foreground hover:bg-muted";
-  return <div className="flex-1 flex flex-col min-h-0 px-3 py-3 gap-2.5 overflow-auto">
-    {!layer ? <div className="text-[12px] text-muted-foreground text-center py-10">
-        {t('editor.inspector.empty')}
-      </div> : <>
-        <div>
-          <div className="text-[10px] uppercase tracking-[0.18em] font-bold text-muted-foreground">{t('editor.inspector.selected')}</div>
-          <div className="text-[12.5px] font-semibold leading-tight mt-0.5">{layer.name}</div>
-        </div>
+  return <InspectorScroll>
+    <InspectorAccordion title={t('editor.inspector.sections.align')} defaultOpen>
+      <div className="grid grid-cols-3 gap-1.5">
+        <AlignGridButton label={t('editor.inspector.canvas.left')} icon={<AlignLeft className="h-3.5 w-3.5 shrink-0" />} onClick={() => alignSelection('x', 'start')} />
+        <AlignGridButton label={t('editor.inspector.canvas.centerH')} icon={<AlignCenter className="h-3.5 w-3.5 shrink-0" />} onClick={() => alignSelection('x', 'center')} />
+        <AlignGridButton label={t('editor.inspector.canvas.right')} icon={<AlignRight className="h-3.5 w-3.5 shrink-0" />} onClick={() => alignSelection('x', 'end')} />
+        <AlignGridButton label={t('editor.inspector.canvas.top')} icon={<ArrowUp className="h-3.5 w-3.5 shrink-0" />} onClick={() => alignSelection('y', 'start')} />
+        <AlignGridButton label={t('editor.inspector.canvas.middle')} icon={<Crosshair className="h-3.5 w-3.5 shrink-0" />} onClick={() => alignSelection('y', 'center')} />
+        <AlignGridButton label={t('editor.inspector.canvas.bottom')} icon={<ArrowDown className="h-3.5 w-3.5 shrink-0" />} onClick={() => alignSelection('y', 'end')} />
+      </div>
+      <div className="text-[11px] leading-snug text-[#9aa1b1]">{t('editor.inspector.multi.alignHint', { count: editable.length })}</div>
+    </InspectorAccordion>
+    <InspectorAccordion title={t('editor.inspector.sections.group')} defaultOpen>
+      <button onClick={onGroupSelection} disabled={!canGroup} className="inline-flex min-h-9 w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md bg-[#F36440] px-3 py-2 text-[12px] font-semibold text-white hover:bg-[#d9532b] disabled:cursor-not-allowed disabled:opacity-40">
+        <Group className="h-3.5 w-3.5 shrink-0" /> {t('editor.layers.group')} <span className="text-white/80">(⌘G)</span>
+      </button>
+      <button onClick={onUngroupSelection} disabled={!canUngroup} className="inline-flex min-h-9 w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-[#e4e7ec] bg-white px-3 py-2 text-[12px] font-semibold text-[#42485a] hover:bg-[#f6f7f9] disabled:cursor-not-allowed disabled:opacity-40">
+        <Ungroup className="h-3.5 w-3.5 shrink-0" /> {t('editor.layers.ungroup')}
+      </button>
+    </InspectorAccordion>
+    <InspectorAccordion title={t('editor.inspector.sections.appearance')} defaultOpen>
+      <SliderField label={t('editor.inspector.fields.opacity')} min={0} max={100} value={opacity} onChange={(value) => {
+        const patches: Record<string, Partial<Layer>> = {};
+        for (const item of editable) patches[item.id] = { opacity: value / 100 };
+        onPatchManyLayers(patches);
+      }} suffix="%" disabled={!editable.length} />
+    </InspectorAccordion>
+  </InspectorScroll>;
+};
 
-        <InspectorField label="Kind">
-          <span className="text-[11.5px] font-mono">{layer.kind}</span>
-        </InspectorField>
-        {layer.assetName && <InspectorField label="Asset">
-            <span className="text-[11.5px] truncate">{layer.assetName}</span>
-            <button className="text-[10.5px] text-[#d9532b] hover:underline shrink-0">change</button>
-          </InspectorField>}
-        {layer.textValue && <InspectorField label="Text">
-            <input className="flex-1 bg-card text-[12px] px-2 py-1 rounded-md border border-[color-mix(in_oklab,#0C0A0F_8%,transparent)] focus:outline-none focus:border-[#f3b39c]" defaultValue={layer.textValue.replace(/^"|"$/g, '')} onBlur={(event) => { const v = event.target.value.trim(); if (v && v !== layer.textValue) onAlign?.({ textValue: v }); }} />
-          </InspectorField>}
-        {layer.font && <InspectorField label="Font">
-            <select className="bg-card text-[12px] px-2 py-1 rounded-md border border-[color-mix(in_oklab,#0C0A0F_8%,transparent)] font-mono">
-              <option>{layer.font}</option>
-              <option>Inter 400</option>
-              <option>Inter 600</option>
-              <option>JetBrains Mono 500</option>
-            </select>
-          </InspectorField>}
-        {/* M-220: font size — live slider + number, both write fontSize (default 34). */}
-        {layer.kind === 'text' && <InspectorField label={t('editor.inspector.fontSize')}>
-            <input type="range" min={12} max={120} value={layer.fontSize ?? 34} onChange={(event) => onAlign?.({ fontSize: Number(event.target.value) })} className="flex-1 accent-[#F36440]" />
-            <input type="number" min={8} max={400} value={layer.fontSize ?? 34} onChange={(event) => { const n = Number(event.target.value); if (Number.isFinite(n) && n > 0) onAlign?.({ fontSize: Math.round(n) }); }} className="w-12 bg-card text-[11.5px] tabular-nums px-1.5 py-1 rounded-md border border-[color-mix(in_oklab,#0C0A0F_8%,transparent)] focus:outline-none focus:border-[#f3b39c]" />
-          </InspectorField>}
-        {/* M-218: text alignment — left / center / right / justify, writes textAlign. */}
-        {layer.kind === 'text' && <InspectorField label={t('editor.inspector.textAlign')}>
-            <div className="flex-1 inline-flex rounded-md overflow-hidden border border-[var(--border-subtle)]">
-              {TEXT_ALIGNS.map(({ id, Icon }) => {
-                const active = (layer.textAlign ?? 'left') === id;
-                return <button key={id} onClick={() => onAlign?.({ textAlign: id })} aria-label={t(`editor.inspector.align.${id}`)} title={t(`editor.inspector.align.${id}`)} className={`flex-1 min-h-10 grid place-items-center py-1.5 ${active ? 'bg-[#F36440] text-primary-foreground' : 'bg-white text-muted-foreground hover:bg-muted'}`}>
-                  <Icon className="w-3.5 h-3.5" />
-                </button>;
-              })}
-            </div>
-          </InspectorField>}
-        {layer.kind === 'text' && <InspectorField label="Decoration">
-            <select value={layer.decoration ?? 'none'} onChange={(event) => onAlign?.({ decoration: event.target.value as TextDecoration })} className="flex-1 bg-card text-[12px] px-2 py-1 rounded-md border border-[color-mix(in_oklab,#0C0A0F_8%,transparent)]">
-              {(['none', 'solid', 'wavy', 'dashed', 'dotted'] as const).map((style) => <option key={style} value={style}>{style === 'none' ? 'None' : style === 'solid' ? 'Underline' : style.charAt(0).toUpperCase() + style.slice(1)}</option>)}
-            </select>
-          </InspectorField>}
-        {/* R5 (c): controlled opacity slider — onChange → patchLayer({opacity}); debounced persist keeps it 60fps. */}
-        <InspectorField label="Opacity">
-          <input type="range" min={0} max={100} value={Math.round(layer.opacity * 100)} onChange={(event) => onAlign?.({ opacity: Number(event.target.value) / 100 })} className="flex-1 accent-[#F36440]" />
-          <span className="text-[11px] font-mono text-muted-foreground tabular-nums w-9 text-right">{Math.round(layer.opacity * 100)}%</span>
-        </InspectorField>
-        <InspectorField label="Visible">
-          <button className="text-[11.5px] inline-flex items-center gap-1.5 text-foreground">
-            {layer.visible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-            {layer.visible ? 'on' : 'hidden'}
-          </button>
-        </InspectorField>
-        <InspectorField label="Locked">
-          <button className="text-[11.5px] inline-flex items-center gap-1.5">
-            {layer.locked ? <Lock className="w-3.5 h-3.5 text-[var(--accent)]" /> : <Unlock className="w-3.5 h-3.5 text-muted-foreground" />}
-            {layer.locked ? 'locked' : 'editable'}
-          </button>
-        </InspectorField>
+const PageInspector = ({ card, onPatchCardMeta }: { card: CardEditorCard; onPatchCardMeta?: (patch: { title?: string; ratio?: string }) => void }) => {
+  const { t } = useTranslation();
+  const actual = actualSize(card.ratio, card.widthPx, card.heightPx);
+  const ratioValue = aspectPreset(card.ratio, card.widthPx, card.heightPx);
+  const ratioOptions = [...ASPECT_PRESETS.map((id) => ({ id, label: id })), ...(ratioValue === 'Custom' ? [{ id: 'Custom', label: 'Custom' }] : [])];
+  return <InspectorScroll>
+    <InspectorAccordion title={t('editor.inspector.sections.canvas')} defaultOpen>
+      <div className="grid grid-cols-2 gap-2">
+        <ReadonlyField label={t('editor.inspector.fields.w')} value={String(actual.width)} />
+        <ReadonlyField label={t('editor.inspector.fields.h')} value={String(actual.height)} />
+      </div>
+      <SelectField label={t('editor.inspector.fields.ratio')} value={ratioValue} options={ratioOptions} onChange={(value) => onPatchCardMeta?.({ ratio: value })} />
+    </InspectorAccordion>
+    <InspectorAccordion title={t('editor.inspector.sections.background')} defaultOpen>
+      <div className="flex min-w-0 items-center gap-1.5">
+        {[card.bg, card.fg, '#fff5f0', '#ffe7da', '#1a1d24'].map((color) => <span key={color} aria-label={color} title={color} className="h-7 w-7 shrink-0 rounded-md border border-black/10" style={{ background: color }} />)}
+        <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-dashed border-[#d5d9e0] text-[#9aa1b1]">
+          <Plus className="h-3.5 w-3.5 shrink-0" />
+        </span>
+      </div>
+    </InspectorAccordion>
+    <InspectorAccordion title={t('editor.inspector.sections.export')} defaultOpen>
+      <ReadonlyField label={t('editor.inspector.fields.bleed')} value="80 px" />
+      <ReadonlyField label={t('editor.inspector.fields.defaultFormat')} value="PNG · 2x" />
+    </InspectorAccordion>
+  </InspectorScroll>;
+};
 
-        <hr className="border-[color-mix(in_oklab,#0C0A0F_6%,transparent)] my-1" />
+const TransformAccordion = ({ layer, canvasW, canvasH, onPatch }: { layer: Layer; canvasW: number; canvasH: number; onPatch: (patch: Partial<Layer>) => void }) => {
+  const { t } = useTranslation();
+  const box = resolveBox(layer, canvasW, canvasH);
+  const patchSize = (key: 'width' | 'height', value: number) => {
+    const patch: Partial<Layer> = { [key]: Math.max(32, value) };
+    if (layer.lockRatio) {
+      const aspect = box.w / Math.max(1, box.h);
+      if (key === 'width') patch.height = Math.max(32, Math.round(value / aspect));
+      if (key === 'height') patch.width = Math.max(32, Math.round(value * aspect));
+    }
+    onPatch(patch);
+  };
+  return <InspectorAccordion title={t('editor.inspector.sections.transform')} defaultOpen>
+    <div className="grid grid-cols-2 gap-2">
+      <NumberField label={t('editor.inspector.fields.x')} value={box.x} min={-160} max={canvasW + 160} onChange={(value) => onPatch({ x: value })} />
+      <NumberField label={t('editor.inspector.fields.y')} value={box.y} min={-160} max={canvasH + 160} onChange={(value) => onPatch({ y: value })} />
+      <NumberField label={t('editor.inspector.fields.w')} value={box.w} min={32} max={canvasW * 2} onChange={(value) => patchSize('width', value)} />
+      <NumberField label={t('editor.inspector.fields.h')} value={box.h} min={32} max={canvasH * 2} onChange={(value) => patchSize('height', value)} />
+      <NumberField label={t('editor.inspector.fields.rotation')} value={layer.rotation ?? 0} min={-180} max={180} icon={<RotateCw className="h-3 w-3 shrink-0" />} onChange={(value) => onPatch({ rotation: value })} suffix="°" />
+      <button onClick={() => onPatch({ lockRatio: !layer.lockRatio })} className={`inline-flex min-h-9 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-md border px-2 py-1.5 text-[11px] font-semibold ${layer.lockRatio ? 'border-[#F36440] bg-[#fdeee9] text-[#d9532b]' : 'border-[#e4e7ec] bg-white text-[#7a8194] hover:bg-[#f6f7f9]'}`}>
+        <Link2 className="h-3 w-3 shrink-0" /> {t('editor.inspector.fields.lockRatio')}
+      </button>
+    </div>
+  </InspectorAccordion>;
+};
 
-        {/* M-219: align-to-canvas (replaces the old top-left/center/bottom px presets that
-            users mistook for text alignment). Two explicit axes, clear edge labels. */}
-        <div className="text-[10px] uppercase tracking-[0.18em] font-bold text-muted-foreground">
-          {t('editor.inspector.alignToCanvas')}
-        </div>
-        <div className="grid grid-cols-3 gap-1">
-          <button onClick={() => alignToCanvas('x', 'start')} className={alignBtn}>{t('editor.inspector.canvas.left')}</button>
-          <button onClick={() => alignToCanvas('x', 'center')} className={alignBtn}>{t('editor.inspector.canvas.centerH')}</button>
-          <button onClick={() => alignToCanvas('x', 'end')} className={alignBtn}>{t('editor.inspector.canvas.right')}</button>
-          <button onClick={() => alignToCanvas('y', 'start')} className={alignBtn}>{t('editor.inspector.canvas.top')}</button>
-          <button onClick={() => alignToCanvas('y', 'center')} className={alignBtn}>{t('editor.inspector.canvas.middle')}</button>
-          <button onClick={() => alignToCanvas('y', 'end')} className={alignBtn}>{t('editor.inspector.canvas.bottom')}</button>
-        </div>
-        {/* Resolved box (matches what's drawn) so M-214 zero-size layers read their real
-            rendered W/H, not a misleading 0. */}
-        {(() => {
-          const box = resolveBox(layer, canvasW, canvasH);
-          return <div className="grid grid-cols-2 gap-2">
-            <InspectorField label="X"><span className="text-[11.5px] font-mono tabular-nums">{Math.round(box.x)}</span></InspectorField>
-            <InspectorField label="Y"><span className="text-[11.5px] font-mono tabular-nums">{Math.round(box.y)}</span></InspectorField>
-            <InspectorField label="W"><span className="text-[11.5px] font-mono tabular-nums">{Math.round(box.w)}</span></InspectorField>
-            <InspectorField label="H"><span className="text-[11.5px] font-mono tabular-nums">{Math.round(box.h)}</span></InspectorField>
-          </div>;
-        })()}
-      </>}
+const AppearanceAccordion = ({ layer, onPatch }: { layer: Layer; onPatch: (patch: Partial<Layer>) => void }) => {
+  const { t } = useTranslation();
+  return <InspectorAccordion title={t('editor.inspector.sections.appearance')} defaultOpen>
+    <SliderField label={t('editor.inspector.fields.opacity')} min={0} max={100} value={Math.round(layer.opacity * 100)} onChange={(value) => onPatch({ opacity: value / 100 })} suffix="%" />
+    <SelectField label={t('editor.inspector.fields.blendMode')} value={layer.blendMode ?? 'normal'} options={BLEND_OPTIONS.map((id) => ({ id, label: t(`editor.inspector.blend.${id}`) }))} onChange={(value) => onPatch({ blendMode: value as BlendMode })} />
+  </InspectorAccordion>;
+};
+
+const EffectsAccordion = ({ layer, onPatch }: { layer: Layer; onPatch: (patch: Partial<Layer>) => void }) => {
+  const { t } = useTranslation();
+  return <InspectorAccordion title={t('editor.inspector.sections.effects')} defaultOpen={!!layer.shadowEnabled || !!layer.strokeEnabled}>
+    <ToggleField label={t('editor.inspector.fields.shadow')} checked={!!layer.shadowEnabled} onChange={(checked) => onPatch({ shadowEnabled: checked, shadowBlur: layer.shadowBlur ?? 18, shadowOffsetX: layer.shadowOffsetX ?? 0, shadowOffsetY: layer.shadowOffsetY ?? 8, shadowColor: layer.shadowColor ?? 'rgba(20,28,46,0.24)' })} />
+    {layer.shadowEnabled && <SliderField label={t('editor.inspector.fields.shadowBlur')} min={0} max={48} value={layer.shadowBlur ?? 18} onChange={(value) => onPatch({ shadowBlur: value })} suffix="px" />}
+    <ToggleField label={t('editor.inspector.fields.stroke')} checked={!!layer.strokeEnabled} onChange={(checked) => onPatch({ strokeEnabled: checked, strokeWidth: layer.strokeWidth ?? 2, strokeColor: layer.strokeColor ?? '#F36440' })} />
+    {layer.strokeEnabled && <SliderField label={t('editor.inspector.fields.strokeWidth')} min={1} max={12} value={layer.strokeWidth ?? 2} onChange={(value) => onPatch({ strokeWidth: value })} suffix="px" />}
+  </InspectorAccordion>;
+};
+
+const InspectorScroll = ({ children }: { children: ReactNode }) => <div className="flex-1 overflow-y-auto">{children}</div>;
+
+const InspectorAccordion = ({ title, children, defaultOpen = false }: { title: string; children: ReactNode; defaultOpen?: boolean }) => {
+  const [open, setOpen] = useState(defaultOpen);
+  return <section className="border-b border-[#eef0f3]">
+    <button onClick={() => setOpen((value) => !value)} className="flex w-full min-w-0 shrink-0 items-center gap-1.5 px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-[#7a8194] hover:text-[#1a1d24]">
+      {open ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
+      <span className="shrink-0 whitespace-nowrap">{title}</span>
+    </button>
+    {open && <div className="flex flex-col gap-2.5 px-4 pb-3">{children}</div>}
+  </section>;
+};
+
+const fieldLabelClass = "mb-1 text-[9.5px] font-bold uppercase tracking-wider text-[#7a8194]";
+const fieldFrameClass = "flex min-h-9 items-center gap-1.5 rounded-md border border-[#e4e7ec] bg-white px-2 py-1.5 focus-within:border-[#f3b39c]";
+const fieldInputClass = "min-w-0 flex-1 bg-transparent text-[12px] text-[#1a1d24] outline-none";
+
+const FieldLabel = ({ label, children }: { label: string; children: ReactNode }) => <label className="block">
+  <div className={fieldLabelClass}>{label}</div>
+  <div className={fieldFrameClass}>{children}</div>
+</label>;
+
+const NumberField = ({ label, value, min, max, icon, suffix, onChange }: { label: string; value: number; min: number; max: number; icon?: ReactNode; suffix?: string; onChange: (value: number) => void }) => {
+  const numericValue = Number.isFinite(value) ? Math.round(value) : 0;
+  const apply = (raw: string) => {
+    const next = Number(raw);
+    if (!Number.isFinite(next)) return;
+    onChange(Math.round(Math.min(max, Math.max(min, next))));
+  };
+  return <label className={fieldFrameClass}>
+    <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-[11px] text-[#9aa1b1]">{icon}{label}</span>
+    <input type="number" value={numericValue} min={min} max={max} onChange={(event) => apply(event.currentTarget.value)} className="min-w-0 flex-1 bg-transparent text-right text-[12px] tabular-nums text-[#1a1d24] outline-none" />
+    {suffix && <span className="shrink-0 whitespace-nowrap text-[10.5px] text-[#9aa1b1]">{suffix}</span>}
+  </label>;
+};
+
+const SelectField = ({ label, value, options, onChange }: { label: string; value: string; options: Array<{ id: string; label: string }>; onChange: (value: string) => void }) => <FieldLabel label={label}>
+  <select value={value} onChange={(event) => onChange(event.currentTarget.value)} className="min-w-0 flex-1 bg-transparent text-[12px] text-[#42485a] outline-none">
+    {options.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+  </select>
+</FieldLabel>;
+
+const SliderField = ({ label, min, max, value, suffix = '', disabled = false, onChange }: { label: string; min: number; max: number; value: number; suffix?: string; disabled?: boolean; onChange: (value: number) => void }) => {
+  const rounded = Math.round(value);
+  return <div>
+    <div className="mb-1 flex items-center justify-between gap-2 text-[11px] text-[#7a8194]">
+      <span className="shrink-0 whitespace-nowrap">{label}</span>
+      <span className="shrink-0 whitespace-nowrap tabular-nums">{rounded}{suffix}</span>
+    </div>
+    <input type="range" min={min} max={max} value={rounded} disabled={disabled} onChange={(event) => onChange(Number(event.currentTarget.value))} className="w-full accent-[#F36440] disabled:opacity-40" />
   </div>;
 };
-const InspectorField = ({
-  label,
-  children
-}: {
-  label: string;
-  children: ReactNode;
-}) => <div>
-    <div className="text-[9.5px] font-bold uppercase tracking-wider text-muted-foreground mb-1">{label}</div>
-    <div className="flex items-center gap-2">{children}</div>
-  </div>;
+
+const ToggleField = ({ label, checked, onChange }: { label: string; checked: boolean; onChange: (checked: boolean) => void }) => <button onClick={() => onChange(!checked)} className="flex min-h-8 w-full shrink-0 items-center justify-between gap-2 whitespace-nowrap text-[12px] text-[#42485a]">
+  <span className="shrink-0 whitespace-nowrap">{label}</span>
+  <span className={`h-4 w-7 shrink-0 rounded-full p-0.5 transition-colors ${checked ? 'bg-[#F36440]' : 'bg-[#e4e7ec]'}`}>
+    <span className={`block h-3 w-3 rounded-full bg-white shadow-sm transition-transform ${checked ? 'translate-x-3' : ''}`} />
+  </span>
+</button>;
+
+const ReadonlyField = ({ label, value }: { label: string; value: string }) => <FieldLabel label={label}>
+  <span className="min-w-0 flex-1 truncate text-right text-[12px] font-mono tabular-nums text-[#42485a]">{value}</span>
+</FieldLabel>;
+
+const AlignGridButton = ({ label, icon, onClick }: { label: string; icon: ReactNode; onClick: () => void }) => <button onClick={onClick} title={label} aria-label={label} className="inline-flex min-h-10 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-md border border-[#e4e7ec] bg-white px-2 py-1.5 text-[10.5px] font-semibold text-[#42485a] hover:bg-[#f6f7f9]">
+  {icon}
+  <span className="sr-only">{label}</span>
+</button>;
 
 /* ─────────────────────────── Derivative chip ─────────────────────────── */
 
