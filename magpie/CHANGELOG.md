@@ -6,6 +6,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); this project is 
 ## [Unreleased]
 
 ### Added
+- **Editor polish trio (deploy serving `index-CYPaymrp.js`).** Reviewer-verified 🟢 (Thistle).
+  - **M-201 — desktop on-canvas rotate handle.** Brings the mobile rotate handle to desktop
+    (≥768px): drag-to-rotate above the selection with snapping; persists `rotation`; the inspector
+    rotation field stays in two-way sync. (Closes the desktop side of M-201's residual.)
+  - **M-238 — mobile two-finger rotate gesture.** Two-touch angle delta rotates the selected layer,
+    persists `rotation`, composes with pinch-zoom.
+  - **M-203 — text gradient fill.** Text layers gain a solid↔gradient fill (2 stops + angle),
+    rendered via `background-clip:text` so it shows in the editor AND PNG export (pixel-verified).
+    Additive `card_spec_json` fields round-tripped via `normalizeLayer`.
+
 - **M-204 — mobile editor (responsive, deploy `2c591428`).** Reviewer-verified 🟢 (Thistle). Adds a
   mobile chrome inside the REAL CardEditor below 768px in ONE component tree (no state fork); desktop
   four-zone is untouched at ≥768px. Zone re-mapping (not a shrunk desktop): left source rail →

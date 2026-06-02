@@ -1914,6 +1914,12 @@ function normalizeLayer(input: unknown, card: LibraryCard, index: number): Layer
       ? (row.decoration as Layer["decoration"])
       : undefined,
     decorationColor: typeof row.decorationColor === "string" ? row.decorationColor : undefined,
+    textFill: ["solid", "gradient"].includes(String(row.textFill))
+      ? (row.textFill as Layer["textFill"])
+      : undefined,
+    gradientFrom: typeof row.gradientFrom === "string" ? row.gradientFrom : undefined,
+    gradientTo: typeof row.gradientTo === "string" ? row.gradientTo : undefined,
+    gradientAngle: typeof row.gradientAngle === "number" ? row.gradientAngle : undefined,
     blendMode: ["normal", "multiply", "screen", "overlay", "darken", "lighten"].includes(String(row.blendMode))
       ? (row.blendMode as Layer["blendMode"])
       : undefined,

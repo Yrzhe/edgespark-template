@@ -8,9 +8,13 @@ import { writeAssetDrag, ASSET_DRAG_MIME } from '@/components/magicpath/asset-li
 const hintProps = (value: string): Record<string, string> => ({ ["place" + "holder"]: value });
 export type LayerKind = 'bg' | 'asset' | 'text' | 'group';
 export type TextDecoration = 'none' | 'solid' | 'wavy' | 'dashed' | 'dotted';
+export type TextFillMode = 'solid' | 'gradient';
 export type BlendMode = 'normal' | 'multiply' | 'screen' | 'overlay' | 'darken' | 'lighten';
 export type ImageFilter = 'none' | 'warm' | 'cool' | 'mono' | 'high-contrast';
 export type CropMode = 'contain' | 'cover' | 'fill';
+const DEFAULT_TEXT_GRADIENT_FROM = '#F36440';
+const DEFAULT_TEXT_GRADIENT_TO = '#2556B6';
+const DEFAULT_TEXT_GRADIENT_ANGLE = 90;
 export type Layer = {
   id: string;
   kind: LayerKind;
@@ -35,6 +39,10 @@ export type Layer = {
   lockRatio?: boolean;
   decoration?: TextDecoration; // text underline style; default 'none'
   decorationColor?: string; // default coral #F36440
+  textFill?: TextFillMode;
+  gradientFrom?: string;
+  gradientTo?: string;
+  gradientAngle?: number;
   blendMode?: BlendMode;
   shadowEnabled?: boolean;
   shadowColor?: string;
@@ -2325,6 +2333,53 @@ function normalizeDegrees(value: number) {
   return Math.round(normalized);
 }
 
+function snapRotation(value: number, forceStep = false) {
+  const normalized = normalizeDegrees(value);
+  if (forceStep) return normalizeDegrees(Math.round(normalized / 15) * 15);
+  const anchors = [-180, -135, -90, -45, 0, 45, 90, 135, 180];
+  const hit = anchors.find((anchor) => Math.abs(normalizeDegrees(normalized - anchor)) <= 3);
+  return hit === undefined ? normalized : normalizeDegrees(hit);
+}
+
+const hasRotationModifier = (event: PointerEvent | React.PointerEvent<HTMLElement>) =>
+  event.shiftKey || event.altKey || event.metaKey || event.ctrlKey;
+
+const touchPairAngle = (touches: TouchList | React.TouchList) => {
+  const a = touches[0];
+  const b = touches[1];
+  return Math.atan2(b.clientY - a.clientY, b.clientX - a.clientX) * 180 / Math.PI;
+};
+
+const normalizeGradientAngle = (value: number | undefined) => {
+  if (!Number.isFinite(value)) return DEFAULT_TEXT_GRADIENT_ANGLE;
+  return ((Math.round(value ?? DEFAULT_TEXT_GRADIENT_ANGLE) % 360) + 360) % 360;
+};
+
+const normalizeHexColor = (value: string | undefined, fallback: string) => {
+  if (typeof value !== 'string') return fallback;
+  const next = value.trim();
+  if (/^#[0-9a-f]{6}$/i.test(next)) return next;
+  if (/^#[0-9a-f]{3}$/i.test(next)) {
+    const [, r, g, b] = next;
+    return `#${r}${r}${g}${g}${b}${b}`;
+  }
+  return fallback;
+};
+
+const textFillStyle = (layer: Layer): CSSProperties => {
+  if (layer.textFill !== 'gradient') return { color: '#FFFFFF', WebkitTextFillColor: undefined };
+  const from = normalizeHexColor(layer.gradientFrom, DEFAULT_TEXT_GRADIENT_FROM);
+  const to = normalizeHexColor(layer.gradientTo, DEFAULT_TEXT_GRADIENT_TO);
+  const angle = normalizeGradientAngle(layer.gradientAngle);
+  return {
+    color: 'transparent',
+    backgroundImage: `linear-gradient(${angle}deg, ${from}, ${to})`,
+    backgroundClip: 'text',
+    WebkitBackgroundClip: 'text',
+    WebkitTextFillColor: 'transparent',
+  };
+};
+
 const frameVisualStyle = (layer: Layer): CSSProperties => ({
   opacity: layer.opacity,
   mixBlendMode: layer.blendMode && layer.blendMode !== 'normal' ? layer.blendMode : undefined,
@@ -2418,6 +2473,7 @@ const CanvasFrame = ({
   // M-225/226: true while an asset chip is dragged over the canvas (drop-target highlight).
   const [assetDragOver, setAssetDragOver] = useState(false);
   const innerRef = useRef<HTMLDivElement | null>(null);
+  const touchRotateRef = useRef<{ layerId: string; startAngle: number; startRotation: number; nextRotation: number; node: HTMLElement } | null>(null);
   // Merge the export frameRef (Quill) with our own inner ref for marquee coordinate math.
   const setFrame = (node: HTMLDivElement | null) => {
     innerRef.current = node;
@@ -2470,6 +2526,38 @@ const CanvasFrame = ({
       }
     }
     return { x: outX, y: outY, gx, gy };
+  };
+  const startTouchRotate = (event: TouchEvent<HTMLDivElement>) => {
+    if (event.touches.length !== 2 || selectedIds.length !== 1) {
+      touchRotateRef.current = null;
+      return;
+    }
+    const layer = layers.find((item) => item.id === selectedIds[0]);
+    if (!layer || layer.locked || (layer.kind !== 'asset' && layer.kind !== 'text')) return;
+    const node = innerRef.current?.querySelector(`[data-layer-id="${layer.id}"]`) as HTMLElement | null;
+    if (!node) return;
+    const rotation = layerRotation(layer);
+    touchRotateRef.current = {
+      layerId: layer.id,
+      startAngle: touchPairAngle(event.touches),
+      startRotation: rotation,
+      nextRotation: rotation,
+      node,
+    };
+  };
+  const moveTouchRotate = (event: TouchEvent<HTMLDivElement>) => {
+    const gesture = touchRotateRef.current;
+    if (!gesture || event.touches.length !== 2) return;
+    event.preventDefault();
+    gesture.nextRotation = snapRotation(gesture.startRotation + touchPairAngle(event.touches) - gesture.startAngle);
+    gesture.node.style.rotate = gesture.nextRotation ? `${gesture.nextRotation}deg` : '';
+  };
+  const finishTouchRotate = (persist: boolean) => {
+    const gesture = touchRotateRef.current;
+    if (!gesture) return;
+    touchRotateRef.current = null;
+    gesture.node.style.rotate = gesture.startRotation ? `${gesture.startRotation}deg` : '';
+    if (persist && gesture.nextRotation !== gesture.startRotation) onPatchLayer(gesture.layerId, { rotation: gesture.nextRotation });
   };
   // R6-editor (4): proportional resize of a multi-selection. Drag a corner of the combined
   // bounding box → every selected layer's box (x,y,w,h) scales about the opposite corner by
@@ -2570,6 +2658,11 @@ const CanvasFrame = ({
       </div>
 
       <div ref={setFrame} onPointerDown={startMarquee}
+        data-m238-two-finger-rotate="true"
+        onTouchStart={startTouchRotate}
+        onTouchMove={moveTouchRotate}
+        onTouchEnd={() => finishTouchRotate(true)}
+        onTouchCancel={() => finishTouchRotate(false)}
         // M-225/226: canvas as a drop-target for asset chips dragged from the Asset Library /
         // Agent panel. Read the shared mime, drop the asset as an image layer at the cursor.
         onDragOver={(event) => {
@@ -2666,7 +2759,7 @@ const CanvasFrame = ({
             parent.style.rotate = `${nextRotation}deg`;
           };
           const move = (moveEvent: PointerEvent) => {
-            nextRotation = normalizeDegrees(initialRotation + angleOf(moveEvent) - initialAngle);
+            nextRotation = snapRotation(initialRotation + angleOf(moveEvent) - initialAngle, hasRotationModifier(moveEvent));
             if (!frame) frame = window.requestAnimationFrame(paint);
           };
           const up = (upEvent: PointerEvent) => {
@@ -2674,7 +2767,7 @@ const CanvasFrame = ({
             window.removeEventListener('pointerup', up);
             if (frame) window.cancelAnimationFrame(frame);
             parent.style.rotate = initialRotation ? `${initialRotation}deg` : '';
-            const rotation = normalizeDegrees(initialRotation + angleOf(upEvent) - initialAngle);
+            const rotation = snapRotation(initialRotation + angleOf(upEvent) - initialAngle, hasRotationModifier(upEvent));
             if (rotation !== initialRotation) onPatchLayer(l.id, { rotation });
           };
           window.addEventListener('pointermove', move);
@@ -2891,7 +2984,7 @@ const EditableTextLayer = ({
   // separate onClick=onSelect here re-toggled the just-added shift-selection back off, which
   // is why canvas shift-click multi-select never accumulated for text layers.
   return <div data-layer-id={layer.id} onPointerDown={editing ? undefined : onPointerDown} onDoubleClick={() => !layer.locked && setEditing(true)} className={`absolute ${layer.locked ? '' : 'cursor-grab'} ${selected ? 'outline outline-1 outline-[#F36440]' : ''}`} style={{ left: x, top: y, width, height, ...frameVisualStyle(layer), touchAction: 'none' }}>
-    <div ref={ref} contentEditable={editing} suppressContentEditableWarning onBlur={save} onKeyDown={(event) => {
+    <div ref={ref} data-m203-text-gradient="true" data-text-gradient-fill={layer.textFill === 'gradient' ? 'true' : 'false'} contentEditable={editing} suppressContentEditableWarning onBlur={save} onKeyDown={(event) => {
       if (event.key === 'Enter') {
         event.preventDefault();
         save();
@@ -2912,6 +3005,7 @@ const EditableTextLayer = ({
       textDecorationColor: layer.decorationColor ?? '#F36440',
       textDecorationThickness: '2.5px',
       textUnderlineOffset: '6px',
+      ...textFillStyle(layer),
       ...textEffectStyle(layer),
     }}>
       {value}
@@ -2937,6 +3031,7 @@ const SelectionHandles = ({ onResize, onRotate }: { onResize: (handle: ResizeHan
   <button
     type="button"
     data-rotate-handle="true"
+    data-m201-desktop-rotate-handle="true"
     onPointerDown={onRotate}
     className="absolute left-1/2 z-30 flex h-11 w-11 -translate-x-1/2 items-center justify-center rounded-full border-2 border-[#F36440] bg-white text-[#F36440] shadow-sm md:-top-9 md:h-7 md:w-7 -top-14"
     style={{ touchAction: 'none' }}
@@ -3285,6 +3380,7 @@ const TEXT_ALIGNS: Array<{ id: NonNullable<Layer['textAlign']>; Icon: ComponentT
   { id: 'right', Icon: AlignRight },
   { id: 'justify', Icon: AlignJustify },
 ];
+const TEXT_FILL_OPTIONS: TextFillMode[] = ['solid', 'gradient'];
 const BLEND_OPTIONS: BlendMode[] = ['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten'];
 const IMAGE_FILTER_OPTIONS: ImageFilter[] = ['none', 'warm', 'cool', 'mono', 'high-contrast'];
 const CROP_OPTIONS: CropMode[] = ['contain', 'cover', 'fill'];
@@ -3352,6 +3448,7 @@ const TextLayerInspector = ({ layer, canvasW, canvasH, onPatch }: { layer: Layer
         }} />
       </FieldLabel>
       <SelectField label={t('editor.inspector.fields.font')} value={layer.font ?? 'Inter 800'} options={['Inter 800', 'Inter 600', 'Inter 400', 'JetBrains Mono 500'].map((id) => ({ id, label: id }))} onChange={(value) => onPatch({ font: value })} />
+      <TextFillControls layer={layer} onPatch={onPatch} />
       <SliderField label={t('editor.inspector.fontSize')} min={8} max={160} value={layer.fontSize ?? 34} onChange={(value) => onPatch({ fontSize: value })} />
       <div>
         <div className={fieldLabelClass}>{t('editor.inspector.textAlign')}</div>
@@ -3369,6 +3466,43 @@ const TextLayerInspector = ({ layer, canvasW, canvasH, onPatch }: { layer: Layer
     <AppearanceAccordion layer={layer} onPatch={onPatch} />
     <EffectsAccordion layer={layer} onPatch={onPatch} />
   </InspectorScroll>;
+};
+
+const TextFillControls = ({ layer, onPatch }: { layer: Layer; onPatch: (patch: Partial<Layer>) => void }) => {
+  const { t } = useTranslation();
+  const mode = layer.textFill === 'gradient' ? 'gradient' : 'solid';
+  const patchMode = (nextMode: TextFillMode) => {
+    if (nextMode === 'gradient') {
+      onPatch({
+        textFill: 'gradient',
+        gradientFrom: normalizeHexColor(layer.gradientFrom, DEFAULT_TEXT_GRADIENT_FROM),
+        gradientTo: normalizeHexColor(layer.gradientTo, DEFAULT_TEXT_GRADIENT_TO),
+        gradientAngle: normalizeGradientAngle(layer.gradientAngle),
+      });
+      return;
+    }
+    onPatch({ textFill: 'solid' });
+  };
+  return <div data-m203-text-gradient-controls="true" className="space-y-2">
+    <div>
+      <div className={fieldLabelClass}>{t('editor.inspector.fields.textFill')}</div>
+      <div className="inline-flex w-full overflow-hidden rounded-md border border-[#e4e7ec] bg-white">
+        {TEXT_FILL_OPTIONS.map((id) => {
+          const active = mode === id;
+          return <button key={id} type="button" onClick={() => patchMode(id)} className={`min-h-9 flex-1 shrink-0 whitespace-nowrap px-2 py-1.5 text-[12px] font-semibold ${active ? 'bg-[#F36440] text-white' : 'text-[#7a8194] hover:bg-[#f6f7f9]'}`}>
+            {t(`editor.inspector.fill.${id}`)}
+          </button>;
+        })}
+      </div>
+    </div>
+    {mode === 'gradient' && <div className="grid grid-cols-2 gap-2">
+      <ColorField label={t('editor.inspector.fields.gradientFrom')} value={layer.gradientFrom ?? DEFAULT_TEXT_GRADIENT_FROM} fallback={DEFAULT_TEXT_GRADIENT_FROM} onChange={(value) => onPatch({ gradientFrom: value })} />
+      <ColorField label={t('editor.inspector.fields.gradientTo')} value={layer.gradientTo ?? DEFAULT_TEXT_GRADIENT_TO} fallback={DEFAULT_TEXT_GRADIENT_TO} onChange={(value) => onPatch({ gradientTo: value })} />
+      <div className="col-span-2">
+        <NumberField label={t('editor.inspector.fields.gradientAngle')} value={normalizeGradientAngle(layer.gradientAngle)} min={0} max={359} onChange={(value) => onPatch({ gradientAngle: normalizeGradientAngle(value) })} suffix="°" />
+      </div>
+    </div>}
+  </div>;
 };
 
 const ImageLayerInspector = ({ layer, canvasW, canvasH, onPatch }: { layer: Layer; canvasW: number; canvasH: number; onPatch: (patch: Partial<Layer>) => void }) => {
@@ -3573,6 +3707,21 @@ const SelectField = ({ label, value, options, onChange }: { label: string; value
     {options.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
   </select>
 </FieldLabel>;
+
+const ColorField = ({ label, value, fallback, onChange }: { label: string; value: string; fallback: string; onChange: (value: string) => void }) => {
+  const safe = normalizeHexColor(value, fallback);
+  const [draft, setDraft] = useState(safe.toUpperCase());
+  useEffect(() => setDraft(safe.toUpperCase()), [safe]);
+  const commitText = () => {
+    const next = normalizeHexColor(draft, safe);
+    setDraft(next.toUpperCase());
+    onChange(next);
+  };
+  return <FieldLabel label={label}>
+    <input type="color" value={safe} onChange={(event) => onChange(event.currentTarget.value)} className="h-7 w-8 shrink-0 cursor-pointer rounded border border-[#e4e7ec] bg-transparent p-0.5" aria-label={label} />
+    <input value={draft} onChange={(event) => setDraft(event.currentTarget.value)} onBlur={commitText} onKeyDown={(event) => { if (event.key === 'Enter') commitText(); }} className="min-w-0 flex-1 bg-transparent text-right text-[12px] font-mono tabular-nums text-[#42485a] outline-none" />
+  </FieldLabel>;
+};
 
 const SliderField = ({ label, min, max, value, suffix = '', disabled = false, onChange }: { label: string; min: number; max: number; value: number; suffix?: string; disabled?: boolean; onChange: (value: number) => void }) => {
   const rounded = Math.round(value);
