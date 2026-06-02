@@ -90,13 +90,14 @@ export const assets = sqliteTable("assets", {
   source: text("source").notNull().default("upload"),
   folderId: text("folder_id").references(() => assetFolders.id),
   ownerUserId: text("owner_user_id"),
+  agentRunId: text("agent_run_id"),
   name: text("name").notNull().default("Untitled asset"),
   s3Uri: text("s3_uri").notNull(),
   contentType: text("content_type").notNull(),
   byteSize: integer("byte_size").notNull(),
   // Asset bytes lifecycle, independent of description status. "ready" = bytes are in R2 and
-  // presignable; "generating" = async agent imagegen in flight (no bytes yet); "failed" = gen
-  // errored. Pre-existing rows default to "ready" via the additive migration.
+  // presignable; "generating" = lazy imagegen reserved (no bytes yet); "rendering" = claimed
+  // by one materializer; "failed" = generation errored. Pre-existing rows default to "ready".
   status: text("status").notNull().default("ready"),
   width: integer("width"),
   height: integer("height"),
@@ -115,6 +116,7 @@ export const assets = sqliteTable("assets", {
 }, (t) => [
   index("idx_assets_kind_owner").on(t.kind, t.ownerUserId),
   index("idx_assets_folder_deleted").on(t.folderId, t.deletedAt),
+  index("idx_assets_agent_run").on(t.agentRunId),
   index("idx_assets_sha").on(t.sha256),
 ]);
 

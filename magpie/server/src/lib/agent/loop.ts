@@ -5,10 +5,9 @@ import { withTimeout } from "../background";
 
 export const MAX_ITERATIONS = 5;
 // Per-tool-call watchdog (M-102). generate_asset now renders INLINE (5-40s for a 1024² image),
-// so this budget must comfortably exceed a real render while still bounding a genuine hang. If a
-// render does blow past it, the tool result becomes a failure and the stuck "generating" asset
-// row is converted to "failed" by the read-time reconcile — never an infinite spinner. The 90s
-// global run watchdog (cards.ts) still bounds the whole run.
+// while batch_generate only reserves pending asset rows and returns fast (M-200 Approach A).
+// If a single render genuinely blows past this, the tool result becomes a failure and read-time
+// reconcile keeps the run from staying in "running" forever.
 export const TOOL_CALL_TIMEOUT_MS = 60_000;
 
 // Emitted to the SSE stream + persisted on the run. tool_call_start / tool_call_result are
@@ -61,6 +60,7 @@ export async function runToolLoop(input: {
   let finalText = "";
   let toolCallsMade = 0;
   const settled: SettledToolCall[] = [];
+  const toolCtx: ToolContext = { ...input.ctx, cardId: input.cardId ?? input.ctx.cardId ?? null };
   const onTextDelta = async (delta: string) => {
     finalText += delta;
     await input.emit({ type: "output", delta });
@@ -82,7 +82,7 @@ export async function runToolLoop(input: {
     for (const call of result.toolCalls) {
       toolCallsMade += 1;
       await input.emit({ type: "tool_call_start", tool: call.name, args: call.args });
-      const execution = await runToolWithWatchdog(call.name, call.args, input.ctx);
+      const execution = await runToolWithWatchdog(call.name, call.args, toolCtx);
       await input.emit({ type: "tool_call_result", tool: call.name, resultPreview: execution.resultPreview, success: execution.success });
       settled.push({ tool: call.name, success: execution.success, resultPreview: execution.resultPreview });
       messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(execution.result) });
@@ -120,7 +120,8 @@ function systemPrompt(cardId: string | null): string {
   return [
     "You are Magpie's server-side design agent. You can really call tools to search and generate brand assets and edit the open card — do not just describe what you would do, actually call the tools.",
     cardLine,
-    "Tools: search_asset (find existing images first), describe_asset, generate_asset (only when nothing suitable exists), get_brand_rules, get_card_layers, add_layer_to_card.",
+    "Tools: search_asset (find existing images first), describe_asset, generate_asset (single ready image), batch_generate (reserve 1-6 pending image options; pixels materialize when assets are polled), get_brand_rules, get_card_layers, add_layer_to_card.",
+    "When the user asks for more than one generated image, multiple options, variants, or a count greater than 1, call batch_generate exactly once. Never satisfy that request by calling generate_asset repeatedly.",
     "Prefer reusing an existing asset over generating a new one. After acting, reply with a short confirmation of what you changed. Never claim a tool result you did not get.",
   ].join("\n");
 }

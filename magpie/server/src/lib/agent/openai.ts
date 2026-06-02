@@ -49,7 +49,7 @@ export const openAiTurn: TurnFn = async (messages, onTextDelta) => {
       temperature: 0.4,
       max_tokens: 700,
       tools: AGENT_TOOLS,
-      tool_choice: "auto",
+      tool_choice: selectToolChoice(messages),
       messages,
     }),
   });
@@ -59,6 +59,20 @@ export const openAiTurn: TurnFn = async (messages, onTextDelta) => {
   }
   return parseStream(response.body, onTextDelta);
 };
+
+function selectToolChoice(messages: ChatMessage[]): "auto" | { type: "function"; function: { name: "batch_generate" } } {
+  if (messages.some((m) => m.role === "tool")) return "auto";
+  const userMsg = [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
+  return shouldForceBatchGenerate(userMsg) ? { type: "function", function: { name: "batch_generate" } } : "auto";
+}
+
+function shouldForceBatchGenerate(text: string): boolean {
+  const lower = text.toLowerCase();
+  if (/\bbatch_generate\b/.test(lower)) return true;
+  const asksForGeneratedImage = /(generate|generated|create|make|image|asset|sticker|illustration|draw)/.test(lower);
+  const asksForMultiple = /\b(count\s*[:=]?\s*[2-6]|[2-6]\s+(images?|assets?|stickers?|options?|variants?)|two|three|four|five|six|multiple|several|options?|variants?)\b/.test(lower);
+  return asksForGeneratedImage && asksForMultiple;
+}
 
 async function parseStream(body: ReadableStream<Uint8Array>, onTextDelta: (delta: string) => Promise<void>): Promise<ModelTurn> {
   const reader = body.getReader();

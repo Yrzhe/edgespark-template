@@ -5,6 +5,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); this project is 
 
 ## [Unreleased]
 
+### Added
+- **M-200 — `batch_generate` agent tool (lazy per-image materialization, deploy `b7d52dfd`).**
+  Reviewer-verified 🟢 (Plumb). Adds a 7th agent tool so a run can request multiple images
+  (count 1–6) without blocking the Worker agent-run window. A prior synchronous impl timed out
+  (`run_timeout_reconciled`, 0 assets even at count=2), so the contract is now **reservation +
+  lazy materialization**:
+  - `batch_generate` creates N `status='generating'` asset rows tied to the run and returns their
+    `assetIds` immediately (no bytes/cost in the run); the run completes instead of timing out.
+  - `materializePendingAsset` renders ONE image inline on asset GET/materialize (reusing the
+    single-image `generate_asset` path that fits the window), `storeGeneratedPng` to R2, flips to
+    `ready`, writes exactly one imagegen cost row + `triggerAssetDescription`. An atomic
+    `generating → rendering` claim prevents concurrent/duplicate renders (no double-charge);
+    stale `rendering` can retry. No cron — materialization is request-driven.
+  - First-turn `tool_choice=batch_generate` is forced for explicit multi-image prompts (prod showed
+    the model otherwise looping `generate_asset`). Migration `0004_closed_martin_li`. +tests (101 total).
+
 ### Security
 - **M-237 — public share API no longer leaks internal DB identifiers (deploy `8eae887c`).** The
   anonymous `GET /api/public/shares/:token` response returned `share.id`, `card.id`, `parentCardId`,

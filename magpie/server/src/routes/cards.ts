@@ -17,9 +17,9 @@ import { scheduleBackground as scheduleBackgroundTask, withTimeout } from "../li
 import { reconcileRunRow } from "../lib/reconcile";
 import { approvedUserOrAgentKey, type AppEnv } from "../middleware/managementAuth";
 
-// Global run watchdog (M-102): an agent run can never stay in "running" longer than this. With
-// generate_asset now async + the per-tool watchdog the loop finishes in seconds; this is the
-// last-resort backstop that flips a hung run to "failed" so the UI never shows a permanent spinner.
+// Global run watchdog (M-102/M-200): an agent run can never stay in "running" forever. The
+// heavier batch_generate tool reserves pending assets and returns fast; pixels render later
+// on one-asset poll/materialize requests.
 const AGENT_RUN_TIMEOUT_MS = 90_000;
 
 const COMPOSE_QUOTE: CostQuoteItem = { provider: "cloudflare", operation: "worker.compose", units: 1, unitMicros: 1_000 };
@@ -369,7 +369,7 @@ export async function runAgentRun(input: AgentRunTaskInput): Promise<void> {
 }
 
 // Tools whose success means the run produced real, user-visible output worth completing on.
-const PRODUCING_TOOLS = new Set(["generate_asset", "add_layer_to_card"]);
+const PRODUCING_TOOLS = new Set(["generate_asset", "batch_generate", "add_layer_to_card"]);
 
 // Build run output refs: the assistant summary (if any) plus a ref per produced asset/layer.
 function buildRunOutputRefs(settled: SettledToolCall[], text: string): Array<Record<string, unknown>> {
@@ -379,6 +379,11 @@ function buildRunOutputRefs(settled: SettledToolCall[], text: string): Array<Rec
     if (!s.success) continue;
     const preview = s.resultPreview ?? {};
     if (s.tool === "generate_asset" && typeof preview.assetId === "string") refs.push({ type: "asset", title: "Generated asset", assetId: preview.assetId });
+    if (s.tool === "batch_generate" && Array.isArray(preview.assetIds)) {
+      for (const assetId of preview.assetIds) {
+        if (typeof assetId === "string") refs.push({ type: "asset", title: "Generated asset", assetId });
+      }
+    }
     if (s.tool === "add_layer_to_card" && typeof preview.layerId === "string") refs.push({ type: "layer", title: "Added layer", layerId: preview.layerId, cardId: preview.cardId });
   }
   if (refs.length === 0) refs.push({ type: "assistantText", title: "Agent response", text });

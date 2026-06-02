@@ -6,6 +6,13 @@ import { logEvent } from "../events";
 import { newId } from "../ids";
 import { parseJson } from "../json";
 import { imagegenCheckBudget, imagegenCreate, type ImagegenMode } from "../imagegen/openai";
+import {
+  emptyStyle,
+  MAX_BATCH_COUNT,
+  resolveCardStyle,
+  type BatchModel,
+} from "../imagegen/batch";
+import { reservePendingBatchAssets } from "../imagegen/materialize";
 import { plannedMediaS3Uri, storeGeneratedPng } from "../imagegen/store";
 
 // R6 agent tool-use surface. Each tool has an OpenAI function-calling schema and a
@@ -20,6 +27,7 @@ export interface ToolContext {
   userId: string;
   isOwner: boolean;
   runId: string | null;
+  cardId?: string | null;
 }
 
 export interface ToolResult {
@@ -30,7 +38,7 @@ export interface ToolResult {
   error?: string;
 }
 
-// OpenAI tool/function definitions. Kept deliberately small (V1 = these 6).
+// OpenAI tool/function definitions. Kept deliberately small (V1 = these 7).
 export const AGENT_TOOLS = [
   {
     type: "function",
@@ -65,7 +73,7 @@ export const AGENT_TOOLS = [
     function: {
       name: "generate_asset",
       description:
-        "Generate a brand-on image with the active palette and Bloome visual DNA, store it in the asset library, and return the new assetId once it is ready (status=\"ready\", bytes persisted). This call renders the image before it returns. Use transparent=true for isolated cutouts/stickers, false for full poster/scene backgrounds.",
+        "Generate exactly one brand-on image with the active palette and Bloome visual DNA, store it in the asset library, and return the new assetId once it is ready (status=\"ready\", bytes persisted). This call renders the image before it returns. Do not call this repeatedly for multiple options; use batch_generate whenever the user asks for more than one generated image.",
       parameters: {
         type: "object",
         properties: {
@@ -73,6 +81,25 @@ export const AGENT_TOOLS = [
           transparent: { type: "boolean", description: "true → transparent cutout PNG; false → opaque full-bleed scene (default false)." },
         },
         required: ["prompt"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "batch_generate",
+      description:
+        "Reserve 1 to 6 brand-on image variations as pending assetIds and return immediately. The pixels materialize lazily when each pending asset is polled. Use this instead of repeated generate_asset calls whenever the user asks for multiple images, options, variants, or a count greater than 1.",
+      parameters: {
+        type: "object",
+        properties: {
+          prompt: { type: "string", description: "Shared prompt for the batch. The server prepends active palette, card style, and Bloome DNA automatically." },
+          count: { type: "integer", description: `Number of images to generate. Maximum ${MAX_BATCH_COUNT}.`, minimum: 1, maximum: MAX_BATCH_COUNT },
+          transparent: { type: "boolean", description: "true -> transparent cutout PNGs; false -> opaque full-bleed images (default false)." },
+          cardId: { type: "string", description: "Optional card id for style inheritance. Defaults to the open card for this run when present." },
+          model: { type: "string", enum: ["gpt-image-1", "gpt-image-2"], description: "Optional image model override. Defaults from transparent mode." },
+        },
+        required: ["prompt", "count"],
       },
     },
   },
@@ -161,6 +188,8 @@ async function dispatch(name: string, args: Record<string, unknown>, ctx: ToolCo
       return describeAsset(args, ctx);
     case "generate_asset":
       return generateAsset(args, ctx);
+    case "batch_generate":
+      return batchGenerate(args, ctx);
     case "get_brand_rules":
       return getBrandRules(args);
     case "get_card_layers":
@@ -298,6 +327,47 @@ async function generateAsset(args: Record<string, unknown>, ctx: ToolContext): P
   }
 }
 
+// M-200 Approach A: reserve pending asset rows and return fast. Pixel generation is deliberately
+// NOT run inside the agent waitUntil; each asset materializes later on its own GET/poll request.
+async function batchGenerate(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
+  const prompt = String(args.prompt ?? "").trim();
+  if (!prompt) return fail("prompt is required");
+  const count = Number(args.count);
+  if (!Number.isInteger(count) || count < 1) return fail("count must be an integer >= 1");
+  if (count > MAX_BATCH_COUNT) return fail(`count must be <= ${MAX_BATCH_COUNT}`);
+
+  const transparent = args.transparent === true;
+  const model = parseBatchModel(args.model, transparent);
+  const cardId = firstString(args.cardId, ctx.cardId);
+  let style = emptyStyle();
+  if (cardId) {
+    const resolved = await resolveCardStyle(db, ctx.userId, cardId);
+    if (!resolved.found) return fail("card_not_found");
+    style = resolved.style;
+  }
+
+  const result = await reservePendingBatchAssets(
+    {
+      userId: ctx.userId,
+      prompt,
+      count,
+      model,
+      transparent,
+      style,
+      dims: { width: 1024, height: 1024 },
+      folderId: null,
+      agentRunId: ctx.runId,
+    },
+    db,
+  );
+  return ok(result, {
+    tool: "batch_generate",
+    assetIds: result.assetIds,
+    requested: result.requested,
+    status: "generating",
+  });
+}
+
 async function getBrandRules(args: Record<string, unknown>): Promise<ToolResult> {
   const cardId = String(args.cardId ?? "");
   const [card] = await db.select().from(cards).where(eq(cards.id, cardId)).limit(1);
@@ -396,6 +466,18 @@ function clampOpacity(value: unknown): number {
 function deriveAssetName(prompt: string): string {
   const trimmed = prompt.trim().replace(/\s+/g, " ");
   return (trimmed.length > 48 ? trimmed.slice(0, 48) : trimmed) || "Agent generated asset";
+}
+
+function parseBatchModel(value: unknown, transparent: boolean): BatchModel {
+  if (value === "gpt-image-1" || value === "gpt-image-2") return value;
+  return transparent ? "gpt-image-1" : "gpt-image-2";
+}
+
+function firstString(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim().length > 0) return value.trim();
+  }
+  return null;
 }
 
 function summarizeArgs(args: Record<string, unknown>): Record<string, unknown> {

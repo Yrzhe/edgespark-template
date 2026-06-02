@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { assets, brandRuleVersions, cards } from "@defs";
+import { agentRuns, assets, brandRuleVersions, cards } from "@defs";
 import { ctx, db, secret, storage, vars } from "edgespark";
-import { executeTool, type ToolContext } from "../src/lib/agent/tools";
+import { AGENT_TOOLS, AGENT_TOOL_NAMES, executeTool, type ToolContext } from "../src/lib/agent/tools";
 import { MAX_ITERATIONS, runToolLoop, type AgentLoopEvent } from "../src/lib/agent/loop";
 import { openAiTurn, type ChatMessage, type ModelTurn } from "../src/lib/agent/openai";
+import { runAgentRun } from "../src/routes/cards";
 import { baselineRules } from "../src/lib/rules/engine";
 
 const OWNER: ToolContext = { userId: "owner", isOwner: true, runId: "run_test" };
@@ -33,6 +34,20 @@ function seedCard(overrides: Record<string, unknown> = {}) {
 
 describe("agent tool executors", () => {
   beforeEach(() => { db._reset(); (ctx as any)._background = []; (storage as any)._resetPuts(); });
+
+  it("registers batch_generate as the seventh agent tool", () => {
+    expect(AGENT_TOOL_NAMES).toHaveLength(7);
+    expect(AGENT_TOOL_NAMES).toContain("batch_generate");
+    const tool = AGENT_TOOLS.find((t) => t.function.name === "batch_generate");
+    expect(tool?.function.parameters).toMatchObject({
+      type: "object",
+      properties: {
+        prompt: { type: "string" },
+        count: { type: "integer", maximum: 6 },
+      },
+      required: ["prompt", "count"],
+    });
+  });
 
   it("search_asset really queries the DB and ranks by term matches", async () => {
     db._seed(assets, [
@@ -141,6 +156,42 @@ describe("agent tool executors", () => {
     vars.values.set("DAILY_LLM_BUDGET_USD", "0.02");
   });
 
+  it("batch_generate reserves pending assets and returns immediately without bytes or cost", async () => {
+    vars.values.set("DAILY_LLM_BUDGET_USD", "5");
+    secret.values.delete("OPENAI_API_KEY");
+    delete process.env.OPENAI_API_KEY;
+    const res = await executeTool("batch_generate", { prompt: "three coral sprout cutouts", count: 3, transparent: true }, OWNER);
+    expect(res.success).toBe(true);
+    expect(res.resultPreview).toMatchObject({ tool: "batch_generate", requested: 3, status: "generating", success: true });
+    expect((res.resultPreview.assetIds as string[])).toHaveLength(3);
+
+    const assetIds = res.resultPreview.assetIds as string[];
+    const rows = db._tables.get("assets") ?? [];
+    expect(rows.map((a: any) => a.id)).toEqual(assetIds);
+    expect(rows.every((a: any) => a.status === "generating" && a.source === "agent-gen" && a.transparent === 1 && a.byteSize === 0)).toBe(true);
+    expect(rows.every((a: any) => a.agentRunId === OWNER.runId)).toBe(true);
+    expect(rows.every((a: any) => String(a.s3Uri).startsWith("s3://magpie-media/assets/agent-gen/"))).toBe(true);
+    for (const row of rows) {
+      const provenance = JSON.parse(row.provenanceJson);
+      expect(provenance).toMatchObject({ batch: true, lazyMaterialize: true, model: "gpt-image-1", agentRunId: OWNER.runId });
+      expect(provenance.prompt).toContain("Active palette");
+    }
+    expect((storage as any)._puts.length).toBe(0);
+    expect(db._tables.get("cost_ledger")?.length ?? 0).toBe(0);
+    vars.values.set("DAILY_LLM_BUDGET_USD", "0.02");
+  });
+
+  it("batch_generate rejects count > 6 before creating assets or cost rows", async () => {
+    vars.values.set("DAILY_LLM_BUDGET_USD", "5");
+    const res = await executeTool("batch_generate", { prompt: "too many", count: 7 }, OWNER);
+    expect(res.success).toBe(false);
+    expect(res.error).toBe("count must be <= 6");
+    expect(db._tables.get("assets")?.length ?? 0).toBe(0);
+    expect(db._tables.get("cost_ledger")?.length ?? 0).toBe(0);
+    expect((storage as any)._puts.length).toBe(0);
+    vars.values.set("DAILY_LLM_BUDGET_USD", "0.02");
+  });
+
   it("records an agent_tool_call event for observability", async () => {
     seedCard();
     await executeTool("get_card_layers", { cardId: "card1" }, OWNER);
@@ -241,6 +292,60 @@ describe("agent tool loop", () => {
     vars.values.set("DAILY_LLM_BUDGET_USD", "0.02");
   });
 
+  it("emits batch_generate tool_call_result with assetIds", async () => {
+    vars.values.set("DAILY_LLM_BUDGET_USD", "5");
+    secret.values.delete("OPENAI_API_KEY");
+    delete process.env.OPENAI_API_KEY;
+    const events: AgentLoopEvent[] = [];
+    const { turn } = scripted([
+      toolTurn("batch_generate", { prompt: "two coral leaf stickers", count: 2, transparent: true }),
+      { text: "Generated two options.", toolCalls: [], finishReason: "stop" },
+    ]);
+    const result = await runToolLoop({ prompt: "make two leaf options", ctx: OWNER, turn, emit: (e) => void events.push(e) });
+    expect(result.toolCallsMade).toBe(1);
+    const done = events.find((e) => e.type === "tool_call_result" && e.tool === "batch_generate")!;
+    expect(done.success).toBe(true);
+    expect(done.resultPreview?.assetIds).toHaveLength(2);
+    expect((db._tables.get("assets") ?? []).every((a: any) => a.status === "generating")).toBe(true);
+    expect((storage as any)._puts.length).toBe(0);
+    vars.values.set("DAILY_LLM_BUDGET_USD", "0.02");
+  });
+
+  it("runAgentRun harvests batch_generate assetIds into output refs and completes early", async () => {
+    vars.values.set("DAILY_LLM_BUDGET_USD", "5");
+    secret.values.delete("OPENAI_API_KEY");
+    delete process.env.OPENAI_API_KEY;
+    db._seed(agentRuns, [{
+      id: "run_batch",
+      userId: "owner",
+      provider: "openai",
+      model: "gpt-4.1-mini",
+      state: "running",
+      prompt: "make two options",
+      planJson: JSON.stringify({ streamEvents: [] }),
+      toolsJson: JSON.stringify(AGENT_TOOL_NAMES),
+      outputRefsJson: "[]",
+      costMicros: 0,
+      createdAt: Date.now(),
+      startedAt: Date.now(),
+    }]);
+    const { turn } = scripted([
+      toolTurn("batch_generate", { prompt: "two coral seed stickers", count: 2, transparent: true }),
+      { text: "Generated two sticker options.", toolCalls: [], finishReason: "stop" },
+    ]);
+    await runAgentRun({ runId: "run_batch", userId: "owner", prompt: "make two options", turn });
+    const run = db._tables.get("agent_runs")![0];
+    expect(run.state).toBe("completed");
+    const refs = JSON.parse(run.outputRefsJson);
+    expect(refs.filter((r: any) => r.type === "asset")).toHaveLength(2);
+    const events = JSON.parse(run.planJson).streamEvents;
+    const toolResult = events.find((e: any) => e.type === "tool_call_result" && e.tool === "batch_generate");
+    expect(toolResult.resultPreview.assetIds).toHaveLength(2);
+    expect((db._tables.get("assets") ?? []).filter((a: any) => a.status === "generating")).toHaveLength(2);
+    expect((db._tables.get("cost_ledger") ?? []).filter((r: any) => String(r.operation).startsWith("openai.imagegen.")).length).toBe(0);
+    vars.values.set("DAILY_LLM_BUDGET_USD", "0.02");
+  });
+
   it("caps tool iterations at MAX_ITERATIONS", async () => {
     seedCard();
     // A model that never stops calling tools.
@@ -271,6 +376,19 @@ describe("openAiTurn streaming parse", () => {
     });
     return new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } });
   }
+
+  it("forces batch_generate as tool_choice for explicit multi-image requests", async () => {
+    let requestBody: any = null;
+    vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+      requestBody = JSON.parse(String(init.body));
+      return sseResponse([
+        `data: ${JSON.stringify({ choices: [{ delta: { content: "Queued." }, finish_reason: "stop" }] })}\n\n`,
+        "data: [DONE]\n\n",
+      ]);
+    });
+    await openAiTurn([{ role: "user", content: "Create exactly 2 generated image options." }], async () => {});
+    expect(requestBody.tool_choice).toEqual({ type: "function", function: { name: "batch_generate" } });
+  });
 
   it("assembles a tool_call from fragmented streaming deltas", async () => {
     vi.stubGlobal("fetch", async () => sseResponse([

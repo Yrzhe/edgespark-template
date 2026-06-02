@@ -6,6 +6,7 @@ import { buildPresignedGetPlaceholder, describeAssetFromUrl, safePresignPreview 
 import { httpError } from "../lib/httpErrors";
 import { newId } from "../lib/ids";
 import { isRecord, parseJson } from "../lib/json";
+import { materializePendingAsset } from "../lib/imagegen/materialize";
 import { gcOrphanMedia } from "../lib/storage/gc";
 import { reconcileAssetRow, reconcileAssetRows } from "../lib/reconcile";
 import { approvedUserOrAgentKey, ownerSessionOrOwnerToken, type AppEnv } from "../middleware/managementAuth";
@@ -35,16 +36,25 @@ export const assetRoutes = new Hono<AppEnv>()
     const items = await Promise.all(page.map((row: any) => publicAsset(row)));
     return c.json({ assets: items, page: { limit, offset, total: all.length } });
   })
+  .post("/assets/:id/materialize", async (c) => {
+    const found = await assetById(c.req.param("id"));
+    if (!found || found.deletedAt) return httpError(c, 404, "not_found", "Asset not found.");
+    const materialized = canMaterialize(found, c.get("principal")) ? await materializePendingAsset(found.id) : { asset: found };
+    const row = await reconcileAssetRow(materialized.asset ?? found);
+    return c.json({ asset: await publicAsset(row) });
+  })
   .get("/assets/:id", async (c) => {
     const found = await assetById(c.req.param("id"));
     if (!found || found.deletedAt) return httpError(c, 404, "not_found", "Asset not found.");
-    const row = await reconcileAssetRow(found); // M-102 layer 2: stale generating → failed
+    const materialized = canMaterialize(found, c.get("principal")) ? await materializePendingAsset(found.id) : { asset: found };
+    const row = await reconcileAssetRow(materialized.asset ?? found); // M-102 layer 2: stale non-lazy generating → failed
     return c.json({ asset: await publicAsset(row) });
   })
   .get("/assets/:id/file", async (c) => {
     const found = await assetById(c.req.param("id"));
     if (!found || found.deletedAt) return httpError(c, 404, "not_found", "Asset not found.");
-    const row = await reconcileAssetRow(found);
+    const materialized = canMaterialize(found, c.get("principal")) ? await materializePendingAsset(found.id) : { asset: found };
+    const row = await reconcileAssetRow(materialized.asset ?? found);
     if (assetStatus(row) !== "ready") return httpError(c, 404, "asset_not_ready", "Asset bytes are not ready.");
     const parsed = storage.tryParseS3Uri(row.s3Uri);
     if (!parsed) return httpError(c, 404, "asset_not_fetchable", "Asset bytes are not fetchable.");
@@ -185,6 +195,12 @@ function isOwnerAdmin(principal: AppEnv["Variables"]["principal"]): boolean {
   return principal.kind === "owner" || (principal.kind === "user" && principal.role === "owner");
 }
 
+function canMaterialize(row: any, principal: AppEnv["Variables"]["principal"]): boolean {
+  if (isOwnerAdmin(principal)) return true;
+  const userId = principalUserId(principal);
+  return !!userId && userId === row.ownerUserId;
+}
+
 async function mutableAsset(id: string, principal: AppEnv["Variables"]["principal"]): Promise<{ row: any } | { response: Response }> {
   const [row] = await db.select().from(assets).where(eq(assets.id, id)).limit(1);
   if (!row || row.deletedAt) return { response: new Response(JSON.stringify({ error: { code: "not_found", message: "Asset not found.", requestId: crypto.randomUUID() } }), { status: 404, headers: { "Content-Type": "application/json" } }) };
@@ -223,7 +239,7 @@ async function readAssetCreateBody(c: any): Promise<Record<string, unknown> | nu
 // missing as "ready" (D1 backfills the default for real rows).
 function assetStatus(row: any): "generating" | "ready" | "failed" {
   const s = row?.status;
-  return s === "generating" || s === "failed" ? s : "ready";
+  return s === "generating" || s === "rendering" || s === "failed" ? s === "failed" ? "failed" : "generating" : "ready";
 }
 
 // Public projection of an asset row. NEVER leaks raw s3_uri. previewUrl is a real presigned GET

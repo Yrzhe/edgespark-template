@@ -28,7 +28,8 @@ add). Available tools:
 
 - search_asset(query, limit?=10) — fuzzy-search the team asset library by description/name/tags. Returns { assetId, name, description, thumbnail }[].
 - describe_asset(assetId) — full description + metadata for one asset.
-- generate_asset(prompt, transparent?=false) — generate a brand-on image (active palette + Bloome DNA) and add it to the library. Returns { assetId, status: "generating", mode } immediately; the image renders asynchronously and the asset flips to status="ready" once its bytes land (status="failed" on error). You may reference the assetId right away (e.g. add_layer_to_card) without waiting. Chargeable; counted in the cost ledger.
+- generate_asset(prompt, transparent?=false) — generate one brand-on image (active palette + Bloome DNA), persist the PNG to R2, and add it to the library before returning { assetId, status: "ready", mode }. Chargeable; counted in the cost ledger exactly once.
+- batch_generate(prompt, count, transparent?=false, cardId?, model?) — reserve 1-6 pending brand-on image options and return { assetIds, requested, status: "generating" } immediately. Uses the open card/cardId for style inheritance. Pixels materialize lazily when each asset is polled or fetched; materialization renders one image inline, persists the PNG to R2, writes exactly one imagegen cost row, then starts auto-description.
 - get_brand_rules(cardId) — the card's canonical palette colors + clearspace/letterform thresholds.
 - get_card_layers(cardId) — the card's current layers.
 - add_layer_to_card(cardId, layer) — append a layer { type: text|asset|bg, text?, assetId?, x, y, width, height, opacity?, decoration? }. Caller must be the card creator or owner.
@@ -55,6 +56,7 @@ GET ${baseUrl}/api/public/agent/runs/:id
 GET ${baseUrl}/api/public/agent/runs/:id/events
 GET ${baseUrl}/api/public/palettes
 POST ${baseUrl}/api/public/imagegen
+POST ${baseUrl}/api/public/imagegen/batch
 POST ${baseUrl}/api/public/copy/draft
 
 ## Owner Management Routes

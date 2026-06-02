@@ -2,6 +2,7 @@ import { db } from "edgespark";
 import { eq } from "drizzle-orm";
 import { agentRuns, assets } from "@defs";
 import { parseJson } from "./json";
+import { pendingAssetIsLazy } from "./imagegen/materialize";
 
 // Read-time reconcile (M-102 layer 2). The inline-render fix means an asset/run should never
 // linger in a non-terminal state, but if a render ever genuinely outlives the Worker window the
@@ -13,7 +14,14 @@ export const STALE_RUNNING_MS = 90_000;
 // If the asset row is still "generating" past the threshold, mark it failed (persist) and return
 // the failed row. Otherwise return the row unchanged. Safe to call on any/empty row.
 export async function reconcileAssetRow<T extends Record<string, any> | null | undefined>(row: T, now = Date.now()): Promise<T> {
-  if (!row || row.status !== "generating") return row;
+  if (!row || (row.status !== "generating" && row.status !== "rendering")) return row;
+  if (pendingAssetIsLazy(row)) {
+    if (row.status === "rendering" && now - Number(row.updatedAt ?? row.createdAt ?? 0) > STALE_GENERATING_MS) {
+      await db.update(assets).set({ status: "generating", updatedAt: now }).where(eq(assets.id, row.id)).catch(() => undefined);
+      return { ...row, status: "generating", updatedAt: now } as T;
+    }
+    return row;
+  }
   if (now - Number(row.createdAt ?? 0) <= STALE_GENERATING_MS) return row;
   const provenance = parseJson<Record<string, unknown>>(row.provenanceJson, {});
   const provenanceJson = JSON.stringify({ ...provenance, error: provenance.error ?? "render_timeout_reconciled" });
