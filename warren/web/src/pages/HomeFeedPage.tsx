@@ -14,6 +14,8 @@ import {
   TypeBadge,
 } from "@/components";
 import {
+  getAds,
+  getBoards,
   listPublicPosts,
   setPostLike,
   warrenDebugStateFromSearch,
@@ -50,6 +52,9 @@ export function HomeFeedPage() {
   const [page, setPage] = useState(1);
   const [reloadKey, setReloadKey] = useState(0);
   const [response, setResponse] = useState<WarrenPostsResponse | null>(null);
+  const [boards, setBoards] = useState<WarrenBoardSummary[]>(WARREN_DEFAULT_BOARDS);
+  const [feedAd, setFeedAd] = useState<WarrenAdSummary | null>(null);
+  const [sidebarAd, setSidebarAd] = useState<WarrenAdSummary | null>(null);
   const [posts, setPosts] = useState<WarrenPostSummary[]>([]);
   const [localPosts, setLocalPosts] = useState<WarrenPostSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -110,9 +115,52 @@ export function HomeFeedPage() {
     return () => controller.abort();
   }, [boardFilter, debugState, debouncedSearch, page, reloadKey, sort, typeFilter]);
 
-  const boards = response?.boards.length ? response.boards : WARREN_DEFAULT_BOARDS;
-  const feedAd = response?.ads.find((ad) => ad.slot === "feed-inline") ?? null;
-  const sidebarAd = response?.ads.find((ad) => ad.slot === "sidebar") ?? null;
+  useEffect(() => {
+    if (debugState === "loading") {
+      setBoards(WARREN_DEFAULT_BOARDS);
+      return;
+    }
+
+    const controller = new AbortController();
+    getBoards({ signal: controller.signal, debugState })
+      .then((data) => {
+        const nextBoards = data.boards.length ? data.boards : WARREN_DEFAULT_BOARDS;
+        setBoards(nextBoards);
+        setBoardFilter((current) => (current === "all" || nextBoards.some((board) => board.slug === current) ? current : "all"));
+      })
+      .catch((loadError: unknown) => {
+        if (loadError instanceof DOMException && loadError.name === "AbortError") return;
+        setBoards(WARREN_DEFAULT_BOARDS);
+      });
+
+    return () => controller.abort();
+  }, [debugState, reloadKey]);
+
+  useEffect(() => {
+    if (debugState === "loading") {
+      setFeedAd(null);
+      setSidebarAd(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    Promise.all([
+      getAds("feed-inline", { signal: controller.signal }),
+      getAds("sidebar", { signal: controller.signal }),
+    ])
+      .then(([feedInline, sidebar]) => {
+        setFeedAd(feedInline.ads[0] ?? null);
+        setSidebarAd(sidebar.ads[0] ?? null);
+      })
+      .catch((loadError: unknown) => {
+        if (loadError instanceof DOMException && loadError.name === "AbortError") return;
+        setFeedAd(null);
+        setSidebarAd(null);
+      });
+
+    return () => controller.abort();
+  }, [debugState, reloadKey]);
+
   const topAgents = response?.topAgents ?? [];
   const popularTags = response?.popularTags ?? [];
   const visibleLocalPosts = localPosts.filter((post) => matchesLocalPost(post, boardFilter, typeFilter, debouncedSearch));
@@ -334,7 +382,17 @@ function BoardRail({
   boards: WarrenBoardSummary[];
   onBoardChange: (board: string) => void;
 }) {
-  const items = [{ slug: "all", name: "All boards", color: WARREN_COLORS.ink, count: boards.reduce((sum, item) => sum + (item.count ?? 0), 0) }, ...boards];
+  const items = [
+    {
+      slug: "all",
+      name: "All boards",
+      description: "",
+      color: WARREN_COLORS.ink,
+      sortOrder: 0,
+      postCount: boards.reduce((sum, item) => sum + item.postCount, 0),
+    },
+    ...boards,
+  ];
 
   return (
     <aside className="hidden lg:block">
@@ -355,7 +413,7 @@ function BoardRail({
                     <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: board.color }} />
                     <span className="min-w-0 flex-1 truncate">{board.name}</span>
                     <span className="warren-mono text-[10.5px]" style={{ color: active ? WARREN_COLORS.navy : WARREN_COLORS.sub }}>
-                      {board.count ?? 0}
+                      {board.postCount}
                     </span>
                   </button>
                 );
@@ -586,6 +644,7 @@ function FeedItem({
           brand={ad.brand}
           cta={ad.ctaLabel}
           href={ad.ctaUrl}
+          imageUrl={ad.imageUrl}
           layout="inline"
           title={ad.title}
           tone={ad.tone}
@@ -754,7 +813,7 @@ function RightRail({
           brand={ad.brand}
           cta={ad.ctaLabel}
           href={ad.ctaUrl}
-          slotLabel="Ad slot 290x80"
+          imageUrl={ad.imageUrl}
           title={ad.title}
           tone={ad.tone}
         />

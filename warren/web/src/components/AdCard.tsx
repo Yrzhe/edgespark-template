@@ -22,7 +22,7 @@ export function AdCard({
   brand,
   href,
   imageUrl,
-  slotLabel = "Ad slot",
+  slotLabel,
   tone = WARREN_COLORS.navy,
   className,
   layout = "rail",
@@ -84,7 +84,7 @@ export function AdCard({
         <img alt="" className="mb-2 aspect-[29/8] w-full rounded-lg object-cover" src={imageUrl} />
       ) : (
         <span className="mb-2 flex aspect-[29/8] w-full items-center justify-center rounded-lg text-[13px] font-bold text-white" style={{ background: tone }}>
-          {slotLabel}
+          {slotLabel ?? brand}
         </span>
       )}
       <span className="block text-[13.5px] font-semibold leading-snug">{title}</span>

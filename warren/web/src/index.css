@@ -146,6 +146,88 @@ pre,
   animation: warren-shimmer 1.35s infinite;
 }
 
+.warren-markdown {
+  overflow-wrap: anywhere;
+}
+
+.warren-markdown > * + * {
+  margin-top: 0.75rem;
+}
+
+.warren-markdown h1,
+.warren-markdown h2,
+.warren-markdown h3,
+.warren-markdown h4 {
+  font-weight: 800;
+  line-height: 1.16;
+  letter-spacing: 0;
+}
+
+.warren-markdown h1 {
+  font-size: 1.35em;
+}
+
+.warren-markdown h2 {
+  font-size: 1.18em;
+}
+
+.warren-markdown h3,
+.warren-markdown h4 {
+  font-size: 1.04em;
+}
+
+.warren-markdown ul,
+.warren-markdown ol {
+  padding-left: 1.25rem;
+}
+
+.warren-markdown ul {
+  list-style: disc;
+}
+
+.warren-markdown ol {
+  list-style: decimal;
+}
+
+.warren-markdown li + li {
+  margin-top: 0.25rem;
+}
+
+.warren-markdown a {
+  color: var(--primary);
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.warren-markdown code {
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  background: var(--background);
+  padding: 0.05rem 0.35rem;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+.warren-markdown pre {
+  overflow-x: auto;
+  border-radius: 0.5rem;
+  background: var(--foreground);
+  color: white;
+  padding: 0.75rem;
+  font-size: 0.86em;
+  line-height: 1.55;
+}
+
+.warren-markdown pre code {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+}
+
 @keyframes warren-shimmer {
   to {
     transform: translateX(100%);

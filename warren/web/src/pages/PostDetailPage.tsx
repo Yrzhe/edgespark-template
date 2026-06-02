@@ -24,6 +24,7 @@ import {
   type WarrenPostDetailResponse,
 } from "@/lib/api";
 import { debugStateToNotice, errorToToast, type ToastMessage } from "@/lib/asyncStates";
+import { renderMarkdownToHtml } from "@/lib/markdown";
 import { WARREN_COLORS } from "@/lib/tokens";
 
 const COMMENT_PAGE_SIZE = 2;
@@ -184,7 +185,7 @@ export function PostDetailPage({ postId }: { postId: string }) {
           <>
             <article className="rounded-2xl border bg-white p-5" style={{ borderColor: WARREN_COLORS.line }}>
               <PostHeader post={post} />
-              <MarkdownishBody body={post.body} />
+              <MarkdownBody body={post.body} className="mt-4 text-[14.5px] leading-relaxed" />
               <ImageGallery images={post.images} onOpen={setLightboxIndex} />
               <TagList tags={post.tags} />
               <PostActions
@@ -310,51 +311,14 @@ function PostHeader({ post }: { post: WarrenPostDetail }) {
   );
 }
 
-function MarkdownishBody({ body }: { body: string }) {
-  const blocks = parseMarkdownish(body);
+function MarkdownBody({ body, className }: { body: string; className?: string }) {
+  const html = useMemo(() => renderMarkdownToHtml(body), [body]);
   return (
-    <div className="mt-4 space-y-3 text-[14.5px] leading-relaxed" style={{ color: WARREN_COLORS.ink }}>
-      {blocks.map((block, index) => {
-        if (block.kind === "code") {
-          return (
-            <pre
-              className="overflow-x-auto rounded-lg p-3 text-[12.5px] leading-relaxed text-white"
-              key={index}
-              style={{ background: WARREN_COLORS.ink }}
-            >
-              <code className="warren-mono">{block.text}</code>
-            </pre>
-          );
-        }
-
-        return <ParagraphWithInlineCode key={index} text={block.text} />;
-      })}
-    </div>
-  );
-}
-
-function ParagraphWithInlineCode({ text }: { text: string }) {
-  const parts = text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g).filter(Boolean);
-  return (
-    <p>
-      {parts.map((part, index) => {
-        if (part.startsWith("**") && part.endsWith("**")) {
-          return <strong key={index}>{part.slice(2, -2)}</strong>;
-        }
-        if (part.startsWith("`") && part.endsWith("`")) {
-          return (
-            <code
-              className="warren-mono rounded px-1.5 py-[1px] text-[13px]"
-              key={index}
-              style={{ background: WARREN_COLORS.cream, border: `1px solid ${WARREN_COLORS.line}` }}
-            >
-              {part.slice(1, -1)}
-            </code>
-          );
-        }
-        return <span key={index}>{part}</span>;
-      })}
-    </p>
+    <div
+      className={["warren-markdown", className].filter(Boolean).join(" ")}
+      dangerouslySetInnerHTML={{ __html: html }}
+      style={{ color: WARREN_COLORS.ink }}
+    />
   );
 }
 
@@ -558,9 +522,7 @@ function CommentCard({
         </span>
       ) : null}
       <AuthorRow agent={comment.agent} createdAt={comment.createdAt} />
-      <p className="mt-2 text-[14px] leading-relaxed" style={{ color: WARREN_COLORS.ink }}>
-        {comment.body}
-      </p>
+      <MarkdownBody body={comment.body} className="mt-2 text-[14px] leading-relaxed" />
       <ImageGallery images={comment.images} max={4} onOpen={onOpenImage} />
       <div className="mt-2 flex items-center gap-3">
         <LikePill base={comment.likeCount} liked={Boolean(liked[comment.id] ?? comment.likedByViewer)} onToggle={() => onToggleLike(comment.id)} />
@@ -588,9 +550,7 @@ function ReplyCard({ liked, onToggleLike, reply }: { liked: boolean; onToggleLik
   return (
     <div>
       <AuthorRow agent={reply.agent} createdAt={reply.createdAt} small />
-      <p className="mt-1 text-[13.5px] leading-relaxed" style={{ color: WARREN_COLORS.ink }}>
-        {reply.body}
-      </p>
+      <MarkdownBody body={reply.body} className="mt-1 text-[13.5px] leading-relaxed" />
       <div className="mt-1">
         <LikePill base={reply.likeCount} liked={liked} onToggle={onToggleLike} />
       </div>
@@ -692,50 +652,6 @@ function DetailLoading() {
       </section>
     </>
   );
-}
-
-function parseMarkdownish(body: string) {
-  const lines = body.split("\n");
-  const blocks: Array<{ kind: "paragraph" | "code"; text: string }> = [];
-  let paragraph: string[] = [];
-  let code: string[] = [];
-  let inCode = false;
-
-  for (const line of lines) {
-    if (line.startsWith("```")) {
-      if (inCode) {
-        blocks.push({ kind: "code", text: code.join("\n") });
-        code = [];
-        inCode = false;
-      } else {
-        if (paragraph.length) {
-          blocks.push({ kind: "paragraph", text: paragraph.join(" ") });
-          paragraph = [];
-        }
-        inCode = true;
-      }
-      continue;
-    }
-
-    if (inCode) {
-      code.push(line);
-      continue;
-    }
-
-    if (!line.trim()) {
-      if (paragraph.length) {
-        blocks.push({ kind: "paragraph", text: paragraph.join(" ") });
-        paragraph = [];
-      }
-      continue;
-    }
-
-    paragraph.push(line);
-  }
-
-  if (paragraph.length) blocks.push({ kind: "paragraph", text: paragraph.join(" ") });
-  if (inCode && code.length) blocks.push({ kind: "code", text: code.join("\n") });
-  return blocks;
 }
 
 function imageBackground(image: WarrenImageSummary): React.CSSProperties {
