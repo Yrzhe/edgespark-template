@@ -341,9 +341,10 @@ function ShellRoute() {
     await client.auth.signOut();
     window.location.assign("/login");
   };
+  const shellViewportClass = active === "editor" ? "h-full" : "magpie-shell-mobile-scroll h-full";
   return (
     <div className="h-dvh overflow-auto">
-      <div className="magpie-shell-mobile-scroll h-full">
+      <div className={shellViewportClass}>
         <MagpieShellV2 initialNav={active} onNavChange={(id) => navigate(navToRoute(id))} onOmniSubmit={runOmni} omniBusy={omniBusy} runtimeStats={runtimeStats} counts={{ cards: shellCounts.data.cards, assets: shellCounts.data.assets, team: shellCounts.data.team, inbox: shellCounts.data.inbox }} teamCount={shellCounts.data.team} inboxCount={shellCounts.data.inbox} user={session ? { name: session.me.user.name, email: session.me.user.email } : undefined} isOwner={isOwner} onNewSession={() => void newSession()} onSettings={() => setSettingsOpen(true)} onInbox={() => navigate("/inbox")} onNewCard={() => {
           void createCardFromTemplate(null, null, "draft").then((created) => navigate(`/editor/${encodeURIComponent(created.id)}`)).catch((error: unknown) => setShellToast(error instanceof Error ? error.message : "Create failed."));
         }}>

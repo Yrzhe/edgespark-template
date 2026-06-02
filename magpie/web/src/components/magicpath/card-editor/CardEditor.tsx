@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ComponentType, CSSProperties, ReactNode } from 'react';
-import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Eye, EyeOff, Lock, Unlock, GripVertical, Plus, Layers as LayersIcon, Sparkles, Image as ImageIcon, Type as TypeIcon, Square, Save, Send, GitBranch, Search, ArrowRight, Loader2, CheckCircle2, Coins, Palette as PaletteIcon, History, ShieldCheck, AlertCircle, ArrowUp, ArrowDown, Download, Bot, SlidersHorizontal, AlignLeft, AlignCenter, AlignRight, AlignJustify, Crosshair, Group, Ungroup, LayoutTemplate, RotateCw, Link2, Crop, Share2, Copy, X, Trash2, AlertTriangle, FileImage, FileType, FileText, Wand2, ImageOff } from 'lucide-react';
+import type { ComponentType, CSSProperties, ReactNode, Ref, TouchEvent } from 'react';
+import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Eye, EyeOff, Lock, Unlock, GripVertical, Plus, Layers as LayersIcon, Sparkles, Image as ImageIcon, Type as TypeIcon, Square, Save, Send, GitBranch, Search, ArrowRight, Loader2, CheckCircle2, Coins, Palette as PaletteIcon, History, ShieldCheck, AlertCircle, ArrowUp, ArrowDown, Download, Bot, SlidersHorizontal, AlignLeft, AlignCenter, AlignRight, AlignJustify, Crosshair, Group, Ungroup, LayoutTemplate, RotateCw, Link2, Crop, Share2, Copy, X, Trash2, AlertTriangle, FileImage, FileType, FileText, Wand2, ImageOff, Undo2, Redo2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { ExportDialog, type ExportRequest } from './ExportDialog';
 import { exportCard } from '@/lib/export';
@@ -147,6 +147,9 @@ const LAYER_ICON: Record<LayerKind, ComponentType<{
 };
 type SourcePanel = 'layers' | 'assets' | 'templates' | 'text' | 'ai';
 type RightPanel = 'agent' | 'inspector' | 'rules';
+type MobileSheet = SourcePanel | 'inspector' | null;
+type MobileInspectorDetent = 'peek' | 'expanded';
+type MobileInspectorContext = 'text' | 'image' | 'multi' | 'page';
 const SOURCE_NAV_ITEMS: Array<{ id: SourcePanel; icon: ComponentType<{ className?: string }>; labelKey: string }> = [
   { id: 'layers', icon: LayersIcon, labelKey: 'editor.sourceTabs.layers' },
   { id: 'assets', icon: ImageIcon, labelKey: 'editor.sourceTabs.assets' },
@@ -159,6 +162,20 @@ const RIGHT_PANEL_ITEMS: Array<{ id: RightPanel; icon: ComponentType<{ className
   { id: 'inspector', icon: SlidersHorizontal, labelKey: 'editor.tabs.inspector' },
   { id: 'rules', icon: PaletteIcon, labelKey: 'editor.tabs.rules' },
 ];
+const MOBILE_EDITOR_QUERY = '(max-width: 767px)';
+
+function useIsMobileEditor() {
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.matchMedia(MOBILE_EDITOR_QUERY).matches);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const query = window.matchMedia(MOBILE_EDITOR_QUERY);
+    const sync = () => setIsMobile(query.matches);
+    sync();
+    query.addEventListener('change', sync);
+    return () => query.removeEventListener('change', sync);
+  }, []);
+  return isMobile;
+}
 export type CardEditorCard = {
   id: string;
   title: string;
@@ -277,6 +294,10 @@ export const CardEditor = ({
 }: CardEditorProps) => {
   const [sourcePanel, setSourcePanel] = useState<SourcePanel>('layers');
   const [rightPanel, setRightPanel] = useState<RightPanel>('inspector');
+  const isMobile = useIsMobileEditor();
+  const [mobileSheet, setMobileSheet] = useState<MobileSheet>(null);
+  const [mobileInspectorDetent, setMobileInspectorDetent] = useState<MobileInspectorDetent>('peek');
+  const [mobileZoom, setMobileZoom] = useState(1);
   // R6-editor (4): multi-select. selectedIds is the source of truth; selectedLayer is the
   // "primary" (last-picked) for the Inspector + keyboard ops. setSelectedLayer is kept as a
   // single-select shim so all existing call sites (addText, duplicate, delete, undo) work.
@@ -508,6 +529,22 @@ export const CardEditor = ({
     historyRef.current.push({ layers, cardLockVersion: card?.lockVersion ?? 0 });
     applySnapshot(nextSnap.layers);
   };
+  const duplicateSelection = () => {
+    const sel = layers.filter((l) => selectedIds.includes(l.id));
+    if (!sel.length) return;
+    const stamp = Date.now();
+    const dupGroup = sel.some((l) => l.groupId) ? `g_${stamp}` : undefined;
+    const dups: Layer[] = sel.map((l, i) => ({
+      ...l,
+      id: `l_${l.kind}_${stamp}_${i}`,
+      x: (l.x ?? 0) + 24,
+      y: (l.y ?? 0) + 24,
+      locked: false,
+      groupId: l.groupId ? dupGroup : undefined,
+    }));
+    setSelectedIds(dups.map((d) => d.id));
+    void commitLayers([...dups, ...layers]);
+  };
   // Flush any pending save when the editor unmounts so a quick drag-then-navigate isn't lost.
   useEffect(() => () => flushSave(), []);
   // M-225/226: the non-drag asset path. AssetLibrary / Agent produced-asset strip / AssetZoom
@@ -546,11 +583,7 @@ export const CardEditor = ({
       // duplicate - Ctrl/Cmd+D, +24px cascade (matches R3.5 addTextLayer cascade). Whole selection.
       if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')) {
         e.preventDefault();
-        const stamp = Date.now();
-        const dupGroup = sel.some((l) => l.groupId) ? `g_${stamp}` : undefined;
-        const dups: Layer[] = sel.map((l, i) => ({ ...l, id: `l_${l.kind}_${stamp}_${i}`, x: (l.x ?? 0) + 24, y: (l.y ?? 0) + 24, locked: false, groupId: l.groupId ? dupGroup : undefined }));
-        setSelectedIds(dups.map((d) => d.id));
-        void commitLayers([...dups, ...layers]);
+        duplicateSelection();
         return;
       }
       // delete - Delete / Backspace. Skips locked layers in the selection.
@@ -709,7 +742,48 @@ export const CardEditor = ({
   // Keep a live ref so the once-subscribed window listener always calls the latest closure
   // (fresh layers / card) without re-subscribing every render.
   addAssetLayerRef.current = addAssetLayer;
-  if (loading) return <EditorLoadingSkeleton />;
+  const rotateSelection = (delta: number) => {
+    const editable = layers.filter((layer) => selectedIds.includes(layer.id) && !layer.locked && layer.kind !== 'bg');
+    if (!editable.length) return;
+    const patches: Record<string, Partial<Layer>> = {};
+    for (const layer of editable) patches[layer.id] = { rotation: normalizeDegrees((layer.rotation ?? 0) + delta) };
+    editable.length === 1 ? patchLayer(editable[0].id, patches[editable[0].id]) : patchManyLayers(patches);
+  };
+  const openMobileSource = (source: SourcePanel) => {
+    setSourcePanel(source);
+    setMobileSheet(source);
+  };
+  const mobileSelectLayer = (id: string, additive = false) => {
+    additive ? selectLayer(id, true) : selectLayer(id);
+    setRightPanel('inspector');
+    setMobileSheet('inspector');
+    setMobileInspectorDetent('peek');
+  };
+  const selectMobileInspectorContext = (context: MobileInspectorContext) => {
+    if (context === 'page') setSelectedLayer(null);
+    if (context === 'text') {
+      const target = layers.find((layer) => layer.kind === 'text' && layer.visible);
+      if (target) setSelectedLayer(target.id);
+    }
+    if (context === 'image') {
+      const target = layers.find((layer) => layer.kind === 'asset' && layer.visible);
+      if (target) setSelectedLayer(target.id);
+    }
+    if (context === 'multi') {
+      const targets = layers.filter((layer) => layer.kind !== 'bg' && layer.visible).slice(0, 2);
+      if (targets.length > 1) setSelectedIds(targets.map((layer) => layer.id));
+    }
+    setRightPanel('inspector');
+    setMobileSheet('inspector');
+    setMobileInspectorDetent('expanded');
+  };
+  const mobileAddTextLayer = (preset: 'headline' | 'subhead' | 'body' = 'headline') => {
+    addTextLayer(preset);
+    setRightPanel('inspector');
+    setMobileSheet('inspector');
+    setMobileInspectorDetent('peek');
+  };
+  if (loading) return isMobile ? <MobileEditorLoadingSkeleton /> : <EditorLoadingSkeleton />;
   if (error) return <div className="h-dvh grid place-items-center text-[12.5px] text-[var(--destructive)]">{error}</div>;
   if (!activeCard) return <div className="h-dvh grid place-items-center text-[12.5px] text-muted-foreground">No card selected.</div>;
 
@@ -752,7 +826,80 @@ export const CardEditor = ({
         <span className="flex-1 text-[var(--foreground)]">{toast}</span>
       </div>}
 
-      <div className="flex h-full min-h-0">
+      {isMobile ? <MobileEditorLayout
+        card={activeCard}
+        layers={layers}
+        selectedIds={selectedIds}
+        selectedLayer={selectedLayerObject}
+        sourcePanel={sourcePanel}
+        mobileSheet={mobileSheet}
+        inspectorDetent={mobileInspectorDetent}
+        zoom={mobileZoom}
+        saving={saving}
+        layerBusy={layerBusy}
+        previewBox={previewBox}
+        canGroup={canGroup}
+        canUngroup={canUngroup}
+        dragLayerId={dragLayerId}
+        dropTarget={dropTarget}
+        libraryAssets={libraryAssets}
+        libraryAssetsLoading={libraryAssetsLoading}
+        libraryAssetsError={libraryAssetsError}
+        templates={templates}
+        templatesLoading={templatesLoading}
+        templatesError={templatesError}
+        applyingTemplateId={applyingTemplateId}
+        producedAssets={producedAssets}
+        agentRuns={agentRuns}
+        agentInput={agentInput}
+        agentMode={agentMode}
+        derivatives={activeDerivatives}
+        enteredGroupId={enteredGroupId}
+        frameRef={canvasFrameRef}
+        onBack={onBack}
+        onUndo={undo}
+        onRedo={redo}
+        onOpenShare={openShareDialog}
+        onOpenExport={() => setExportOpen(true)}
+        onSaveDraft={onSaveDraft}
+        onSaveReady={onSaveReady}
+        onSetMobileSheet={setMobileSheet}
+        onSetInspectorDetent={setMobileInspectorDetent}
+        onSetZoom={setMobileZoom}
+        onOpenSource={openMobileSource}
+        onAddTextLayer={mobileAddTextLayer}
+        onGroupSelection={groupSelection}
+        onUngroupSelection={ungroupSelection}
+        onSelectLayer={mobileSelectLayer}
+        onClearSelection={() => { setSelectedLayer(null); setMobileSheet(null); }}
+        onLocate={bringIntoView}
+        onToggleVisibility={toggleVisibility}
+        onToggleLock={toggleLock}
+        onMoveLayer={moveLayer}
+        onDeleteLayer={(id) => requestDeleteLayers([id])}
+        onDeleteSelection={() => requestDeleteLayers(selectedIds)}
+        onDuplicateSelection={duplicateSelection}
+        onRotateSelection={rotateSelection}
+        onDragStartRow={setDragLayerId}
+        onDragOverRow={(id, pos) => setDropTarget((prev) => (prev?.id === id && prev.pos === pos ? prev : { id, pos }))}
+        onDropRow={(id) => { if (dragLayerId) reorderLayer(dragLayerId, id, dropTarget?.pos ?? 'above'); setDragLayerId(null); setDropTarget(null); }}
+        onDragEndRow={() => { setDragLayerId(null); setDropTarget(null); }}
+        onOpenDerivative={onOpenDerivative}
+        onApplyTemplate={(id) => void applyTemplate(id)}
+        onOpenAgent={() => { setRightPanel('agent'); setMobileSheet('ai'); }}
+        onAgentInputChange={setAgentInput}
+        onAgentModeChange={setAgentMode}
+        onRunAgentPrompt={(prompt) => onRunAgent?.(prompt)}
+        onRetryAgentRun={(prompt) => onRetryAgentRun?.(prompt) ?? onRunAgent?.(prompt)}
+        onEnterGroup={setEnteredGroupId}
+        onMarqueeSelect={setSelectedIds}
+        onPatchLayer={patchLayer}
+        onPatchManyLayers={patchManyLayers}
+        onPatchCardMeta={(patch) => void onPatchCardMeta?.(patch)}
+        onUseTemplate={() => openMobileSource('templates')}
+        onSelectInspectorContext={selectMobileInspectorContext}
+        onAddAssetAt={addAssetLayer}
+      /> : <div className="flex h-full min-h-0">
         <SourceRail value={sourcePanel} onChange={setSourcePanel} />
         <SourcePanelContent
           source={sourcePanel}
@@ -901,8 +1048,535 @@ export const CardEditor = ({
             onPatchCardMeta={(patch) => void onPatchCardMeta?.(patch)}
           />}
         </aside>
-      </div>
+      </div>}
     </div>;
+};
+
+/* ─────────────────────────── Mobile editor chrome ─────────────────────────── */
+
+const mobileIconButtonClass = "grid min-h-11 min-w-11 shrink-0 place-items-center rounded-full text-[#42485a] active:bg-[#f3f4f6] disabled:opacity-40";
+
+type MobileEditorLayoutProps = {
+  card: CardEditorCard;
+  layers: Layer[];
+  selectedIds: string[];
+  selectedLayer: Layer | null;
+  sourcePanel: SourcePanel;
+  mobileSheet: MobileSheet;
+  inspectorDetent: MobileInspectorDetent;
+  zoom: number;
+  saving: boolean;
+  layerBusy: string | null;
+  previewBox: { w: number; h: number };
+  canGroup: boolean;
+  canUngroup: boolean;
+  dragLayerId: string | null;
+  dropTarget: { id: string; pos: 'above' | 'below' } | null;
+  libraryAssets: EditorSourceAsset[];
+  libraryAssetsLoading: boolean;
+  libraryAssetsError: string | null;
+  templates: EditorTemplate[];
+  templatesLoading: boolean;
+  templatesError: string | null;
+  applyingTemplateId: string | null;
+  producedAssets: ProducedAsset[];
+  agentRuns: AgentRunView[];
+  agentInput: string;
+  agentMode: 'generate' | 'search' | 'compose';
+  derivatives: Derivative[];
+  enteredGroupId: string | null;
+  frameRef: Ref<HTMLDivElement>;
+  onBack?: () => void;
+  onUndo: () => void;
+  onRedo: () => void;
+  onOpenShare: () => void;
+  onOpenExport: () => void;
+  onSaveDraft?: () => void;
+  onSaveReady?: () => void;
+  onSetMobileSheet: (sheet: MobileSheet) => void;
+  onSetInspectorDetent: (detent: MobileInspectorDetent) => void;
+  onSetZoom: (zoom: number) => void;
+  onOpenSource: (source: SourcePanel) => void;
+  onAddTextLayer: (preset?: 'headline' | 'subhead' | 'body') => void;
+  onGroupSelection: () => void;
+  onUngroupSelection: () => void;
+  onSelectLayer: (id: string, additive?: boolean) => void;
+  onClearSelection: () => void;
+  onLocate: (id: string) => void;
+  onToggleVisibility: (id: string) => void;
+  onToggleLock: (id: string) => void;
+  onMoveLayer: (id: string, direction: -1 | 1) => void;
+  onDeleteLayer: (id: string) => void;
+  onDeleteSelection: () => void;
+  onDuplicateSelection: () => void;
+  onRotateSelection: (delta: number) => void;
+  onDragStartRow: (id: string) => void;
+  onDragOverRow: (id: string, pos: 'above' | 'below') => void;
+  onDropRow: (id: string) => void;
+  onDragEndRow: () => void;
+  onOpenDerivative?: (id: string) => void;
+  onApplyTemplate: (id: string) => void;
+  onOpenAgent: () => void;
+  onAgentInputChange: (value: string) => void;
+  onAgentModeChange: (value: 'generate' | 'search' | 'compose') => void;
+  onRunAgentPrompt?: (prompt: string) => void;
+  onRetryAgentRun?: (prompt: string) => void;
+  onEnterGroup: (gid: string | null) => void;
+  onMarqueeSelect: (ids: string[]) => void;
+  onPatchLayer: (id: string, patch: Partial<Layer>, title?: string) => void;
+  onPatchManyLayers: (patches: Record<string, Partial<Layer>>) => void;
+  onPatchCardMeta?: (patch: { title?: string; ratio?: string }) => void;
+  onUseTemplate: () => void;
+  onSelectInspectorContext: (context: MobileInspectorContext) => void;
+  onAddAssetAt?: (detail: { assetId?: string; name?: string; previewUrl?: string | null; width?: number | null; height?: number | null } | null, atX: number, atY: number) => void;
+};
+
+const MobileEditorLayout = ({
+  card,
+  layers,
+  selectedIds,
+  selectedLayer,
+  sourcePanel,
+  mobileSheet,
+  inspectorDetent,
+  zoom,
+  saving,
+  layerBusy,
+  previewBox,
+  canGroup,
+  canUngroup,
+  dragLayerId,
+  dropTarget,
+  libraryAssets,
+  libraryAssetsLoading,
+  libraryAssetsError,
+  templates,
+  templatesLoading,
+  templatesError,
+  applyingTemplateId,
+  producedAssets,
+  agentRuns,
+  agentInput,
+  agentMode,
+  derivatives,
+  enteredGroupId,
+  frameRef,
+  onBack,
+  onUndo,
+  onRedo,
+  onOpenShare,
+  onOpenExport,
+  onSaveDraft,
+  onSaveReady,
+  onSetMobileSheet,
+  onSetInspectorDetent,
+  onSetZoom,
+  onOpenSource,
+  onAddTextLayer,
+  onGroupSelection,
+  onUngroupSelection,
+  onSelectLayer,
+  onClearSelection,
+  onLocate,
+  onToggleVisibility,
+  onToggleLock,
+  onMoveLayer,
+  onDeleteLayer,
+  onDeleteSelection,
+  onDuplicateSelection,
+  onRotateSelection,
+  onDragStartRow,
+  onDragOverRow,
+  onDropRow,
+  onDragEndRow,
+  onOpenDerivative,
+  onApplyTemplate,
+  onOpenAgent,
+  onAgentInputChange,
+  onAgentModeChange,
+  onRunAgentPrompt,
+  onRetryAgentRun,
+  onEnterGroup,
+  onMarqueeSelect,
+  onPatchLayer,
+  onPatchManyLayers,
+  onPatchCardMeta,
+  onUseTemplate,
+  onSelectInspectorContext,
+  onAddAssetAt,
+}: MobileEditorLayoutProps) => {
+  const { t } = useTranslation();
+  const contentSheet = mobileSheet && mobileSheet !== 'inspector' ? mobileSheet : null;
+  const contentTitle = contentSheet ? t(SOURCE_NAV_ITEMS.find((item) => item.id === contentSheet)?.labelKey ?? 'editor.sourceTabs.layers') : '';
+  const actual = actualSize(card.ratio, card.widthPx, card.heightPx);
+  return <div data-mobile-editor-root="true" className="relative flex h-full min-h-0 flex-col overflow-hidden bg-[#eef0f3] pb-10">
+    <header className="flex h-[52px] shrink-0 items-center gap-0.5 border-b border-[#e4e7ec] bg-white px-2">
+      <button onClick={onBack} className={mobileIconButtonClass} aria-label={t('editor.backToLibrary')} title={t('editor.backToLibrary')}>
+        <ChevronLeft className="h-5 w-5" />
+      </button>
+      <div className="min-w-[82px] flex-1">
+        <div className="truncate text-[13px] font-bold tracking-tight">{card.title}</div>
+        <div className="truncate text-[10.5px] font-mono text-[#7a8194]">{card.ratio} · {actual.width}×{actual.height}</div>
+      </div>
+      <button onClick={onUndo} className={mobileIconButtonClass} aria-label="Undo" title="Undo"><Undo2 className="h-[18px] w-[18px]" /></button>
+      <button onClick={onRedo} className={mobileIconButtonClass} aria-label="Redo" title="Redo"><Redo2 className="h-[18px] w-[18px]" /></button>
+      <button onClick={onOpenShare} className={mobileIconButtonClass} aria-label={t('share.button')} title={t('share.button')}><Share2 className="h-[18px] w-[18px]" /></button>
+      <button onClick={onOpenExport} className={mobileIconButtonClass} aria-label={t('export.button')} title={t('export.button')}><Download className="h-[18px] w-[18px]" /></button>
+      <button disabled={saving} onClick={onSaveReady} className="inline-flex min-h-11 shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-[#F36440] px-3 text-[12px] font-semibold text-white disabled:opacity-50" aria-label={t('editor.actions.publish')} title={t('editor.actions.publish')}>
+        <Send className="h-3.5 w-3.5 shrink-0" /> {t('editor.actions.publish')}
+      </button>
+    </header>
+
+    <main className="relative min-h-0 flex-1 overflow-hidden" style={{ backgroundImage: 'radial-gradient(circle,#d8dce2 1px,transparent 1px)', backgroundSize: '22px 22px' }}>
+      <div className="absolute right-3 top-3 z-20 rounded-full border border-[#e4e7ec] bg-white/90 px-2.5 py-1 text-[10.5px] font-mono text-[#42485a] shadow-sm">
+        {t('editor.mobile.zoom')} · {Math.round(zoom * 100)}%
+      </div>
+      {layers.length === 0
+        ? <div className="grid h-full place-items-center px-6 pb-20"><EmptyCardState onUseTemplate={onUseTemplate} /></div>
+        : <MobileCanvasStage zoom={zoom} onZoomChange={onSetZoom}>
+          <CanvasFrame
+            layers={layers}
+            ratio={card.ratio}
+            widthPx={card.widthPx}
+            heightPx={card.heightPx}
+            title={card.title}
+            bg={card.bg}
+            fg={card.fg}
+            selectedIds={selectedIds}
+            enteredGroupId={enteredGroupId}
+            onSelectLayer={onSelectLayer}
+            onEnterGroup={onEnterGroup}
+            onMarqueeSelect={onMarqueeSelect}
+            onPatchLayer={onPatchLayer}
+            onMultiPatch={onPatchManyLayers}
+            onLocateLayer={onLocate}
+            onAddAssetAt={onAddAssetAt}
+            frameRef={frameRef}
+          />
+        </MobileCanvasStage>}
+    </main>
+
+    <MobileActionBar active={sourcePanel} onOpenSource={onOpenSource} onAddText={() => onAddTextLayer('headline')} />
+
+    <MobileBottomSheet
+      open={!!contentSheet}
+      title={contentTitle}
+      detent="expanded"
+      reserveActionBar
+      onClose={() => onSetMobileSheet(null)}
+    >
+      {contentSheet && <SourcePanelContent
+        mobile
+        source={contentSheet}
+        layers={layers}
+        selectedIds={selectedIds}
+        layerBusy={layerBusy}
+        previewBox={previewBox}
+        canGroup={canGroup}
+        canUngroup={canUngroup}
+        dragLayerId={dragLayerId}
+        dropTarget={dropTarget}
+        libraryAssets={libraryAssets}
+        libraryAssetsLoading={libraryAssetsLoading}
+        libraryAssetsError={libraryAssetsError}
+        templates={templates}
+        templatesLoading={templatesLoading}
+        templatesError={templatesError}
+        applyingTemplateId={applyingTemplateId}
+        producedAssets={producedAssets}
+        agentRuns={agentRuns}
+        agentInput={agentInput}
+        agentMode={agentMode}
+        derivatives={derivatives}
+        onAddTextLayer={onAddTextLayer}
+        onGroupSelection={onGroupSelection}
+        onUngroupSelection={onUngroupSelection}
+        onSelectLayer={onSelectLayer}
+        onLocate={onLocate}
+        onToggleVisibility={onToggleVisibility}
+        onToggleLock={onToggleLock}
+        onMoveLayer={onMoveLayer}
+        onDeleteLayer={onDeleteLayer}
+        onDragStartRow={onDragStartRow}
+        onDragOverRow={onDragOverRow}
+        onDropRow={onDropRow}
+        onDragEndRow={onDragEndRow}
+        onOpenDerivative={onOpenDerivative}
+        onApplyTemplate={onApplyTemplate}
+        onOpenAgent={onOpenAgent}
+        onAgentInputChange={onAgentInputChange}
+        onAgentModeChange={onAgentModeChange}
+        onRunAgentPrompt={onRunAgentPrompt}
+        onRetryAgentRun={onRetryAgentRun}
+      />}
+    </MobileBottomSheet>
+
+    <MobileInspectorSheet
+      open={mobileSheet === 'inspector'}
+      detent={inspectorDetent}
+      card={card}
+      layers={layers}
+      selectedIds={selectedIds}
+      selectedLayer={selectedLayer}
+      previewBox={previewBox}
+      canGroup={canGroup}
+      canUngroup={canUngroup}
+      onClose={() => onSetMobileSheet(null)}
+      onSetDetent={onSetInspectorDetent}
+      onClearSelection={onClearSelection}
+      onDeleteSelection={onDeleteSelection}
+      onDuplicateSelection={onDuplicateSelection}
+      onRotateSelection={onRotateSelection}
+      onPatchLayer={onPatchLayer}
+      onPatchManyLayers={onPatchManyLayers}
+      onGroupSelection={onGroupSelection}
+      onUngroupSelection={onUngroupSelection}
+      onPatchCardMeta={onPatchCardMeta}
+      onSelectInspectorContext={onSelectInspectorContext}
+    />
+  </div>;
+};
+
+const MobileCanvasStage = ({ zoom, onZoomChange, children }: { zoom: number; onZoomChange: (value: number) => void; children: ReactNode }) => {
+  const pinchRef = useRef<{ distance: number; zoom: number } | null>(null);
+  const distance = (touches: { item(index: number): { clientX: number; clientY: number } | null }) => {
+    const a = touches.item(0);
+    const b = touches.item(1);
+    if (!a || !b) return 0;
+    return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+  };
+  const start = (event: TouchEvent<HTMLDivElement>) => {
+    if (event.touches.length !== 2) return;
+    pinchRef.current = { distance: Math.max(1, distance(event.touches)), zoom };
+  };
+  const move = (event: TouchEvent<HTMLDivElement>) => {
+    if (event.touches.length !== 2 || !pinchRef.current) return;
+    event.preventDefault();
+    const next = Math.min(1.7, Math.max(0.55, pinchRef.current.zoom * (distance(event.touches) / pinchRef.current.distance)));
+    onZoomChange(Number(next.toFixed(2)));
+  };
+  return <div
+    className="flex h-full w-full items-center justify-center overflow-hidden px-4 pb-20 pt-8"
+    onTouchStart={start}
+    onTouchMove={move}
+    onTouchEnd={() => { pinchRef.current = null; }}
+    style={{ touchAction: 'none' }}
+  >
+    <div className="origin-center transition-transform duration-75" style={{ transform: `scale(${zoom})` }}>
+      {children}
+    </div>
+  </div>;
+};
+
+const MobileActionBar = ({ active, onOpenSource, onAddText }: { active: SourcePanel; onOpenSource: (source: SourcePanel) => void; onAddText: () => void }) => {
+  const { t } = useTranslation();
+  const tools: Array<{ id: SourcePanel; icon: ComponentType<{ className?: string }>; label: string }> = [
+    { id: 'layers', icon: LayersIcon, label: t('editor.sourceTabs.layers') },
+    { id: 'assets', icon: ImageIcon, label: t('editor.sourceTabs.assets') },
+    { id: 'text', icon: TypeIcon, label: t('editor.sourceTabs.text') },
+    { id: 'ai', icon: Sparkles, label: t('editor.sourceTabs.ai') },
+    { id: 'templates', icon: LayoutTemplate, label: t('editor.sourceTabs.templates') },
+  ];
+  const renderButton = (item: typeof tools[number]) => {
+    const Icon = item.icon;
+    const current = active === item.id;
+    return <button key={item.id} onClick={() => onOpenSource(item.id)} className={`flex min-h-[56px] min-w-0 flex-1 flex-col items-center justify-center gap-0.5 whitespace-nowrap text-[10.5px] font-medium ${current ? 'text-[#d9532b]' : 'text-[#7a8194]'}`} aria-label={item.label} title={item.label}>
+      <Icon className="h-5 w-5 shrink-0" />
+      <span className="shrink-0 whitespace-nowrap">{item.label}</span>
+    </button>;
+  };
+  return <nav className="flex h-[72px] shrink-0 items-start justify-around border-t border-[#eef0f3] bg-white px-1 pb-3 pt-1.5 shadow-[0_-8px_24px_rgba(20,28,46,0.08)]">
+    {tools.slice(0, 2).map(renderButton)}
+    <button onClick={onAddText} className="flex min-h-[56px] min-w-[56px] shrink-0 flex-col items-center justify-center gap-0.5 whitespace-nowrap text-[10.5px] font-semibold text-[#d9532b]" aria-label={t('editor.mobile.addLayer')} title={t('editor.mobile.addLayer')}>
+      <span className="grid h-10 w-10 place-items-center rounded-full bg-[#F36440] text-white"><Plus className="h-5 w-5" /></span>
+    </button>
+    {tools.slice(2).map(renderButton)}
+  </nav>;
+};
+
+const MobileBottomSheet = ({
+  open,
+  title,
+  detent,
+  reserveActionBar = false,
+  onClose,
+  onSetDetent,
+  children,
+}: {
+  open: boolean;
+  title: string;
+  detent: MobileInspectorDetent;
+  reserveActionBar?: boolean;
+  onClose: () => void;
+  onSetDetent?: (detent: MobileInspectorDetent) => void;
+  children: ReactNode;
+}) => {
+  const { t } = useTranslation();
+  if (!open) return null;
+  const bottom = reserveActionBar ? 72 : 0;
+  const height = detent === 'peek' ? 178 : 'min(78dvh, 620px)';
+  return <>
+    {detent === 'expanded' && <button className="fixed inset-x-0 top-0 z-[52] bg-black/28" style={{ bottom }} aria-label={t('common.close')} onClick={onClose} />}
+    <section className="fixed inset-x-0 z-[55] flex flex-col rounded-t-2xl bg-white shadow-[0_-10px_36px_rgba(20,28,46,.18)]" style={{ bottom, height }} onClick={(event) => event.stopPropagation()}>
+      <button className="flex shrink-0 justify-center pt-2" onClick={() => onSetDetent?.(detent === 'peek' ? 'expanded' : 'peek')} aria-label={detent === 'peek' ? t('editor.mobile.expandInspector') : t('editor.mobile.collapseInspector')}>
+        <span className="h-1 w-9 rounded-full bg-[#d5d9e0]" />
+      </button>
+      <div className="flex min-h-11 shrink-0 items-center gap-2 px-4 py-1.5">
+        <h2 className="min-w-0 flex-1 truncate text-[14px] font-bold tracking-tight">{title}</h2>
+        <button onClick={onClose} className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-[#9aa1b1] active:bg-[#f3f4f6]" aria-label={t('common.close')} title={t('common.close')}>
+          <X className="h-[18px] w-[18px]" />
+        </button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
+    </section>
+  </>;
+};
+
+const MobileInspectorSheet = ({
+  open,
+  detent,
+  card,
+  layers,
+  selectedIds,
+  selectedLayer,
+  previewBox,
+  canGroup,
+  canUngroup,
+  onClose,
+  onSetDetent,
+  onClearSelection,
+  onDeleteSelection,
+  onDuplicateSelection,
+  onRotateSelection,
+  onPatchLayer,
+  onPatchManyLayers,
+  onGroupSelection,
+  onUngroupSelection,
+  onPatchCardMeta,
+  onSelectInspectorContext,
+}: {
+  open: boolean;
+  detent: MobileInspectorDetent;
+  card: CardEditorCard;
+  layers: Layer[];
+  selectedIds: string[];
+  selectedLayer: Layer | null;
+  previewBox: { w: number; h: number };
+  canGroup: boolean;
+  canUngroup: boolean;
+  onClose: () => void;
+  onSetDetent: (detent: MobileInspectorDetent) => void;
+  onClearSelection: () => void;
+  onDeleteSelection: () => void;
+  onDuplicateSelection: () => void;
+  onRotateSelection: (delta: number) => void;
+  onPatchLayer: (id: string, patch: Partial<Layer>, title?: string) => void;
+  onPatchManyLayers: (patches: Record<string, Partial<Layer>>) => void;
+  onGroupSelection: () => void;
+  onUngroupSelection: () => void;
+  onPatchCardMeta?: (patch: { title?: string; ratio?: string }) => void;
+  onSelectInspectorContext: (context: MobileInspectorContext) => void;
+}) => {
+  const { t } = useTranslation();
+  const selectedLayers = selectedIds.map((id) => layers.find((layer) => layer.id === id)).filter(Boolean) as Layer[];
+  const editable = selectedLayers.filter((layer) => !layer.locked && layer.kind !== 'bg');
+  const opacity = editable.length ? Math.round((editable.reduce((sum, layer) => sum + layer.opacity, 0) / editable.length) * 100) : 100;
+  const title = selectedLayers.length > 1
+    ? t('editor.context.multi', { count: selectedLayers.length })
+    : selectedLayer ? `${t(`editor.context.kind.${selectedLayer.kind}`)} · ${selectedLayer.name}` : t('editor.context.page');
+  const setOpacity = (value: number) => {
+    if (!editable.length) return;
+    if (editable.length === 1) onPatchLayer(editable[0].id, { opacity: value / 100 });
+    else {
+      const patches: Record<string, Partial<Layer>> = {};
+      for (const layer of editable) patches[layer.id] = { opacity: value / 100 };
+      onPatchManyLayers(patches);
+    }
+  };
+  return <MobileBottomSheet open={open} title={title} detent={detent} reserveActionBar onClose={onClose} onSetDetent={onSetDetent}>
+    {detent === 'peek' ? <div className="flex h-full flex-col px-4 pb-3">
+      <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-[#7a8194]">
+        <SlidersHorizontal className="h-3.5 w-3.5 shrink-0" /> {t('editor.mobile.quickActions')}
+      </div>
+      <div className="flex items-center gap-1.5">
+        <button disabled={!editable.length} onClick={() => onRotateSelection(15)} className="inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-[#e4e7ec] text-[12.5px] font-semibold text-[#42485a] active:bg-[#f6f7f9] disabled:opacity-40">
+          <RotateCw className="h-4 w-4 shrink-0" /> {t('editor.mobile.rotate')}
+        </button>
+        <button disabled={!selectedIds.length} onClick={onDuplicateSelection} className="inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-[#e4e7ec] text-[12.5px] font-semibold text-[#42485a] active:bg-[#f6f7f9] disabled:opacity-40">
+          <Copy className="h-4 w-4 shrink-0" /> {t('editor.mobile.duplicate')}
+        </button>
+        <button disabled={!editable.length} onClick={onDeleteSelection} className="grid min-h-11 min-w-11 place-items-center rounded-xl border border-[#f3d0cc] text-[#BC4E32] active:bg-[#fdecea] disabled:opacity-40" aria-label={t('editor.alerts.delete')} title={t('editor.alerts.delete')}>
+          <Trash2 className="h-4 w-4" />
+        </button>
+      </div>
+      <div className="mt-3">
+        <div className="mb-1 flex items-center justify-between text-[11.5px] text-[#7a8194]">
+          <span className="shrink-0 whitespace-nowrap">{t('editor.mobile.opacity')}</span>
+          <span className="shrink-0 tabular-nums">{opacity}%</span>
+        </div>
+        <input type="range" min={0} max={100} value={opacity} disabled={!editable.length} onChange={(event) => setOpacity(Number(event.currentTarget.value))} className="w-full accent-[#F36440] disabled:opacity-40" />
+      </div>
+      <button onClick={() => onSetDetent('expanded')} className="mt-auto text-center text-[11.5px] font-medium text-[#9aa1b1]">{t('editor.mobile.inspectorHint')}</button>
+    </div> : <div className="flex h-full min-h-0 flex-col">
+      <div className="min-h-0 flex-1 overflow-y-auto [&_button]:min-h-10 [&_input]:text-[13px] [&_select]:text-[13px]">
+        <InspectorPanel
+          card={card}
+          layers={layers}
+          selectedIds={selectedIds}
+          layer={selectedLayer}
+          canvasW={previewBox.w}
+          canvasH={previewBox.h}
+          canGroup={canGroup}
+          canUngroup={canUngroup}
+          onPatchLayer={onPatchLayer}
+          onPatchManyLayers={onPatchManyLayers}
+          onGroupSelection={onGroupSelection}
+          onUngroupSelection={onUngroupSelection}
+          onPatchCardMeta={onPatchCardMeta}
+        />
+      </div>
+      <MobileInspectorTabs selectedIds={selectedIds} selectedLayer={selectedLayer} onClearSelection={onClearSelection} onSelectContext={onSelectInspectorContext} />
+    </div>}
+  </MobileBottomSheet>;
+};
+
+const MobileInspectorTabs = ({ selectedIds, selectedLayer, onSelectContext }: { selectedIds: string[]; selectedLayer: Layer | null; onClearSelection: () => void; onSelectContext: (context: MobileInspectorContext) => void }) => {
+  const { t } = useTranslation();
+  const active: MobileInspectorContext = selectedIds.length > 1 ? 'multi' : selectedLayer?.kind === 'text' ? 'text' : selectedLayer?.kind === 'asset' ? 'image' : 'page';
+  const items: Array<{ id: MobileInspectorContext; label: string; icon: ComponentType<{ className?: string }> }> = [
+    { id: 'text', label: t('editor.mobile.contextText'), icon: TypeIcon },
+    { id: 'image', label: t('editor.mobile.contextImage'), icon: ImageIcon },
+    { id: 'multi', label: t('editor.mobile.contextMulti'), icon: Group },
+    { id: 'page', label: t('editor.mobile.contextPage'), icon: SlidersHorizontal },
+  ];
+  return <nav className="flex shrink-0 items-stretch justify-around border-t border-[#eef0f3] px-2 pb-3 pt-1.5 text-[10.5px]">
+    {items.map(({ id, label, icon: Icon }) => <button key={id} onClick={() => onSelectContext(id)} className={`flex min-h-[52px] min-w-0 flex-1 flex-col items-center justify-center gap-0.5 whitespace-nowrap font-medium ${active === id ? 'text-[#d9532b]' : 'text-[#7a8194]'}`} aria-label={label} title={label}>
+      <Icon className="h-[18px] w-[18px] shrink-0" />
+      <span className="shrink-0 whitespace-nowrap">{label}</span>
+    </button>)}
+  </nav>;
+};
+
+const MobileEditorLoadingSkeleton = () => {
+  const { t } = useTranslation();
+  return <div data-mobile-editor-root="true" className="flex h-dvh w-full flex-col overflow-hidden bg-[#eef0f3] pb-10 text-[#1a1d24]">
+    <div className="flex h-[52px] shrink-0 items-center gap-2 border-b border-[#e4e7ec] bg-white px-3">
+      <div className="h-9 w-9 animate-pulse rounded-full bg-[#f3f4f6]" />
+      <div className="h-4 w-32 animate-pulse rounded bg-[#eef0f3]" />
+      <div className="ml-auto flex gap-1">{[0, 1, 2].map((item) => <div key={item} className="h-9 w-9 animate-pulse rounded-full bg-[#f3f4f6]" />)}</div>
+    </div>
+    <div className="grid flex-1 place-items-center px-6 pb-20" style={{ backgroundImage: 'radial-gradient(circle,#d8dce2 1px,transparent 1px)', backgroundSize: '22px 22px' }}>
+      <div className="relative aspect-square w-[280px] overflow-hidden rounded-2xl bg-white shadow-lg">
+        <div className="absolute inset-0 animate-pulse">
+          <div className="absolute right-7 top-9 h-24 w-24 rounded-full bg-[#eef0f3]" />
+          <div className="absolute left-7 bottom-20 h-7 w-44 rounded bg-[#eef0f3]" />
+          <div className="absolute left-7 bottom-9 h-7 w-28 rounded bg-[#eef0f3]" />
+        </div>
+        <div className="absolute inset-x-0 bottom-4 flex items-center justify-center gap-1.5 text-[12px] text-[#9aa1b1]"><Loader2 className="h-3.5 w-3.5 animate-spin" /> {t('editor.loadingCard')}</div>
+      </div>
+    </div>
+    <MobileActionBar active="layers" onOpenSource={() => undefined} onAddText={() => undefined} />
+  </div>;
 };
 
 /* ─────────────────────────── Editor v2 shell panels ─────────────────────────── */
@@ -926,6 +1600,7 @@ const SourceRail = ({ value, onChange }: { value: SourcePanel; onChange: (value:
 };
 
 const SourcePanelContent = ({
+  mobile = false,
   source,
   layers,
   selectedIds,
@@ -968,6 +1643,7 @@ const SourcePanelContent = ({
   onRunAgentPrompt,
   onRetryAgentRun,
 }: {
+  mobile?: boolean;
   source: SourcePanel;
   layers: Layer[];
   selectedIds: string[];
@@ -1011,7 +1687,10 @@ const SourcePanelContent = ({
   onRetryAgentRun?: (prompt: string) => void;
 }) => {
   const { t } = useTranslation();
-  return <aside className="flex w-[264px] shrink-0 flex-col border-r border-[#e4e7ec] bg-white max-[1180px]:w-[236px]">
+  const shellClass = mobile
+    ? "flex h-full min-h-0 flex-col bg-white"
+    : "flex w-[264px] shrink-0 flex-col border-r border-[#e4e7ec] bg-white max-[1180px]:w-[236px]";
+  return <aside className={shellClass}>
     {source === 'layers' && <>
       <SourcePanelHead title={t('editor.sourceTabs.layers')} count={layers.length} />
       <div className="px-2 pb-2 pt-2">
@@ -1031,6 +1710,7 @@ const SourcePanelContent = ({
       <ul className="flex-1 space-y-0.5 overflow-auto px-1.5">
         {layers.map((l, index) => <LayerRow
           key={l.id}
+          mobile={mobile}
           layer={l}
           isSelected={selectedIds.includes(l.id)}
           busy={layerBusy === l.id}
@@ -1058,7 +1738,7 @@ const SourcePanelContent = ({
     </>}
 
     {source === 'assets' && <AssetsSourcePanel assets={libraryAssets} loading={libraryAssetsLoading} error={libraryAssetsError} onOpenAgent={onOpenAgent} />}
-    {source === 'templates' && <TemplatesSourcePanel templates={templates} loading={templatesLoading} error={templatesError} applyingId={applyingTemplateId} onApplyTemplate={onApplyTemplate} />}
+    {source === 'templates' && <TemplatesSourcePanel mobile={mobile} templates={templates} loading={templatesLoading} error={templatesError} applyingId={applyingTemplateId} onApplyTemplate={onApplyTemplate} />}
     {source === 'text' && <TextSourcePanel onAddTextLayer={onAddTextLayer} />}
     {source === 'ai' && <AISourcePanel
       input={agentInput}
@@ -1121,12 +1801,14 @@ const ProducedAssetSourceTile = ({ asset }: { asset: ProducedAsset }) => {
 };
 
 const TemplatesSourcePanel = ({
+  mobile = false,
   templates,
   loading,
   error,
   applyingId,
   onApplyTemplate,
 }: {
+  mobile?: boolean;
   templates: EditorTemplate[];
   loading: boolean;
   error: string | null;
@@ -1171,8 +1853,8 @@ const TemplatesSourcePanel = ({
             <div className="truncate text-[11px] font-semibold text-[#1a1d24]">{tpl.title}</div>
             <div className="truncate text-[9.5px] font-mono text-[#7a8194]">{tpl.createdAtLabel}</div>
           </div>
-          <div className="absolute inset-0 flex items-center justify-center bg-[#0C0A0F]/34 opacity-0 transition-opacity group-hover:opacity-100">
-            <button onClick={() => onApplyTemplate(tpl.id)} disabled={!!applyingId} className="inline-flex min-h-8 items-center gap-1.5 whitespace-nowrap rounded-md bg-[#F36440] px-2.5 py-1 text-[11px] font-semibold text-white shadow-sm hover:bg-[#d9532b] disabled:opacity-60">
+          <div className={`absolute inset-0 flex items-center justify-center bg-[#0C0A0F]/34 transition-opacity ${mobile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+            <button onClick={() => onApplyTemplate(tpl.id)} disabled={!!applyingId} className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-md bg-[#F36440] px-2.5 py-1 text-[11px] font-semibold text-white shadow-sm hover:bg-[#d9532b] disabled:opacity-60 ${mobile ? 'min-h-10' : 'min-h-8'}`}>
               {applyingId === tpl.id ? <Loader2 className="h-3 w-3 shrink-0 animate-spin" /> : <LayoutTemplate className="h-3 w-3 shrink-0" />}
               {applyingId === tpl.id ? t('editor.sourcePanels.templates.applying') : t('editor.sourcePanels.templates.apply')}
             </button>
@@ -1383,11 +2065,35 @@ const ShareDialog = ({
 
 const EditorAlertDialog = ({ config, onClose }: { config: EditorAlertConfig | null; onClose: () => void }) => {
   const { t } = useTranslation();
+  const isMobile = useIsMobileEditor();
   if (!config) return null;
   const confirm = () => {
     config.onConfirm?.();
     onClose();
   };
+  if (isMobile) {
+    return <div className="fixed inset-0 z-[70] bg-black/40" onClick={onClose}>
+      <div className="absolute inset-x-0 bottom-0 rounded-t-2xl bg-white pb-7 shadow-[0_-10px_36px_rgba(20,28,46,.25)]" onClick={(event) => event.stopPropagation()}>
+        <div className="flex justify-center pt-2"><span className="h-1 w-9 rounded-full bg-[#d5d9e0]" /></div>
+        <div className="flex items-start gap-3 px-5 pt-4">
+          <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${config.danger ? 'bg-[#fdecea] text-[#BC4E32]' : 'bg-[#fdeee9] text-[#F36440]'}`}>
+            {config.danger ? <AlertTriangle className="h-5 w-5" /> : <AlertCircle className="h-5 w-5" />}
+          </span>
+          <div className="min-w-0">
+            <h3 className="text-[15px] font-bold tracking-tight">{config.title}</h3>
+            <p className="mt-1 text-[12.5px] leading-relaxed text-[#42485a]">{config.body}</p>
+          </div>
+        </div>
+        <div className="mt-4 flex gap-2 px-5">
+          {config.cancelLabel && <button onClick={onClose} className="min-h-12 flex-1 whitespace-nowrap rounded-xl border border-[#e4e7ec] px-3 text-[14px] font-semibold text-[#42485a]">{config.cancelLabel}</button>}
+          <button onClick={confirm} className={`inline-flex min-h-12 flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl px-3 text-[14px] font-semibold text-white ${config.danger ? 'bg-[#BC4E32]' : 'bg-[#F36440]'}`}>
+            {config.danger && <Trash2 className="h-4 w-4" />}
+            {config.confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>;
+  }
   return <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-6" onClick={onClose}>
     <div className="w-[380px] max-w-[92vw] overflow-hidden rounded-2xl bg-white shadow-[0_24px_60px_rgba(20,28,46,.35)]" onClick={(event) => event.stopPropagation()}>
       <div className="flex items-center gap-2.5 px-5 pt-5">
@@ -1471,6 +2177,7 @@ const RightContextHeader = ({ panel, layer, selectedCount, card }: { panel: Righ
 /* ─────────────────────────── Layer row ─────────────────────────── */
 
 const LayerRow = ({
+  mobile = false,
   layer,
   isSelected,
   busy,
@@ -1491,6 +2198,7 @@ const LayerRow = ({
   onDropRow,
   onDragEndRow
 }: {
+  mobile?: boolean;
   layer: Layer;
   isSelected: boolean;
   busy: boolean;
@@ -1520,20 +2228,20 @@ const LayerRow = ({
       onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; const r = e.currentTarget.getBoundingClientRect(); onDragOverRow?.(e.clientY < r.top + r.height / 2 ? 'above' : 'below'); }}
       onDrop={(e) => { e.preventDefault(); onDropRow?.(); }}
       onDragEnd={() => onDragEndRow?.()}
-      className={`group relative flex min-h-10 items-center gap-1.5 rounded-lg px-2 py-1.5 cursor-pointer transition-colors ${isSelected ? 'bg-[#fdeee9] ring-1 ring-inset ring-[#f3b39c]' : 'hover:bg-[#f6f7f9]'} ${dragging ? 'opacity-40' : ''}`}>
+      className={`group relative flex items-center gap-1.5 rounded-lg px-2 cursor-pointer transition-colors ${mobile ? 'min-h-12 py-2' : 'min-h-10 py-1.5'} ${isSelected ? 'bg-[#fdeee9] ring-1 ring-inset ring-[#f3b39c]' : 'hover:bg-[#f6f7f9]'} ${dragging ? 'opacity-40' : ''}`}>
       {/* M-216: drop-position indicator while dragging a row to reorder */}
       {dropPos && <span className={`absolute left-1 right-1 h-0.5 rounded-full bg-[#F36440] ${dropPos === 'above' ? '-top-px' : '-bottom-px'}`} />}
       <GripVertical className="w-3.5 h-3.5 text-[#c2c7d1] shrink-0 cursor-grab" />
       <button onClick={e => {
       e.stopPropagation();
       onToggleVisibility();
-    }} className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-[#7a8194] hover:bg-white" aria-label="Toggle visibility" title="Toggle visibility">
+      }} className={`grid shrink-0 place-items-center rounded-md text-[#7a8194] hover:bg-white ${mobile ? 'h-10 w-10' : 'h-7 w-7'}`} aria-label="Toggle visibility" title="Toggle visibility">
         {layer.visible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
       </button>
       <button onClick={e => {
       e.stopPropagation();
       onToggleLock();
-    }} className={`grid h-7 w-7 shrink-0 place-items-center rounded-md hover:bg-white ${layer.locked ? 'text-[#d9532b]' : 'text-[#7a8194]/70'}`} aria-label="Toggle lock" title="Toggle lock">
+    }} className={`grid shrink-0 place-items-center rounded-md hover:bg-white ${mobile ? 'h-10 w-10' : 'h-7 w-7'} ${layer.locked ? 'text-[#d9532b]' : 'text-[#7a8194]/70'}`} aria-label="Toggle lock" title="Toggle lock">
         {layer.locked ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5 opacity-60 group-hover:opacity-100" />}
       </button>
       <Icon className={`w-3.5 h-3.5 shrink-0 ${isSelected ? 'text-[#d9532b]' : 'text-[#9aa1b1]'}`} />
@@ -1553,27 +2261,27 @@ const LayerRow = ({
       {offCanvas && <button onClick={e => {
       e.stopPropagation();
       onLocate?.();
-    }} className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-[#d9532b] hover:bg-white" aria-label={t('editor.layers.bringIntoView')} title={t('editor.layers.bringIntoView')}>
+    }} className={`grid shrink-0 place-items-center rounded-md text-[#d9532b] hover:bg-white ${mobile ? 'h-10 w-10' : 'h-7 w-7'}`} aria-label={t('editor.layers.bringIntoView')} title={t('editor.layers.bringIntoView')}>
         <Crosshair className="w-3.5 h-3.5" />
       </button>}
       {busy && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
-      <div className="ml-auto hidden shrink-0 items-center gap-0.5 group-hover:flex">
+      <div className={`ml-auto shrink-0 items-center gap-0.5 ${mobile ? 'flex' : 'hidden group-hover:flex'}`}>
         <button disabled={!canMoveUp} onClick={e => {
         e.stopPropagation();
         onMoveUp();
-      }} className="grid h-7 w-7 place-items-center rounded-md text-[#7a8194] hover:bg-white disabled:opacity-30" aria-label="Move layer up">
+      }} className={`grid place-items-center rounded-md text-[#7a8194] hover:bg-white disabled:opacity-30 ${mobile ? 'h-10 w-10' : 'h-7 w-7'}`} aria-label="Move layer up">
           <ArrowUp className="w-3 h-3" />
         </button>
         <button disabled={!canMoveDown} onClick={e => {
         e.stopPropagation();
         onMoveDown();
-      }} className="grid h-7 w-7 place-items-center rounded-md text-[#7a8194] hover:bg-white disabled:opacity-30" aria-label="Move layer down">
+      }} className={`grid place-items-center rounded-md text-[#7a8194] hover:bg-white disabled:opacity-30 ${mobile ? 'h-10 w-10' : 'h-7 w-7'}`} aria-label="Move layer down">
           <ArrowDown className="w-3 h-3" />
         </button>
         <button disabled={layer.locked} onClick={e => {
         e.stopPropagation();
         onDelete();
-      }} className="grid h-7 w-7 place-items-center rounded-md text-[#BC4E32] hover:bg-white disabled:opacity-30" aria-label={t('editor.alerts.delete')} title={t('editor.alerts.delete')}>
+      }} className={`grid place-items-center rounded-md text-[#BC4E32] hover:bg-white disabled:opacity-30 ${mobile ? 'h-10 w-10' : 'h-7 w-7'}`} aria-label={t('editor.alerts.delete')} title={t('editor.alerts.delete')}>
           <Trash2 className="w-3 h-3" />
         </button>
       </div>
@@ -1611,6 +2319,11 @@ const EditableTitle = ({ title, onSave }: { title: string; onSave?: (title: stri
 /* ─────────────────────────── Canvas ─────────────────────────── */
 
 const layerRotation = (layer: Layer) => Number.isFinite(layer.rotation) ? Number(layer.rotation) : 0;
+
+function normalizeDegrees(value: number) {
+  const normalized = ((((value + 180) % 360) + 360) % 360) - 180;
+  return Math.round(normalized);
+}
 
 const frameVisualStyle = (layer: Layer): CSSProperties => ({
   opacity: layer.opacity,
@@ -1933,8 +2646,42 @@ const CanvasFrame = ({
           window.addEventListener('pointermove', move);
           window.addEventListener('pointerup', up, { once: true });
         };
+        const startRotate = (event: React.PointerEvent<HTMLElement>) => {
+          if (l.locked || (l.kind !== 'asset' && l.kind !== 'text')) return;
+          event.preventDefault();
+          event.stopPropagation();
+          onSelectLayer(l.id);
+          const frameRect = innerRef.current?.getBoundingClientRect();
+          const parent = event.currentTarget.parentElement as HTMLElement | null;
+          if (!frameRect || !parent) return;
+          const centerX = frameRect.left + x + lw / 2;
+          const centerY = frameRect.top + y + lh / 2;
+          const angleOf = (pointer: PointerEvent | React.PointerEvent<HTMLElement>) => Math.atan2(pointer.clientY - centerY, pointer.clientX - centerX) * 180 / Math.PI;
+          const initialAngle = angleOf(event);
+          const initialRotation = layerRotation(l);
+          let frame = 0;
+          let nextRotation = initialRotation;
+          const paint = () => {
+            frame = 0;
+            parent.style.rotate = `${nextRotation}deg`;
+          };
+          const move = (moveEvent: PointerEvent) => {
+            nextRotation = normalizeDegrees(initialRotation + angleOf(moveEvent) - initialAngle);
+            if (!frame) frame = window.requestAnimationFrame(paint);
+          };
+          const up = (upEvent: PointerEvent) => {
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', up);
+            if (frame) window.cancelAnimationFrame(frame);
+            parent.style.rotate = initialRotation ? `${initialRotation}deg` : '';
+            const rotation = normalizeDegrees(initialRotation + angleOf(upEvent) - initialAngle);
+            if (rotation !== initialRotation) onPatchLayer(l.id, { rotation });
+          };
+          window.addEventListener('pointermove', move);
+          window.addEventListener('pointerup', up, { once: true });
+        };
         const startDrag = (event: React.PointerEvent<HTMLElement | SVGSVGElement>) => {
-          if (event.target instanceof HTMLElement && event.target.dataset.resizeHandle) return;
+          if (event.target instanceof Element && event.target.closest('[data-resize-handle], [data-rotate-handle]')) return;
           if (l.locked || (l.kind !== 'asset' && l.kind !== 'text')) return;
           event.preventDefault();
           // R6-editor (4): decide what moves. If this layer is already selected (multi),
@@ -1946,7 +2693,9 @@ const CanvasFrame = ({
           const inEnteredGroup = !!l.groupId && l.groupId === enteredGroupId;
           const grp = (l.groupId && l.groupId !== enteredGroupId)
             ? layers.filter((g) => g.groupId === l.groupId).map((g) => g.id) : null;
-          if (inEnteredGroup ? (selectedIds.length !== 1 || !alreadySelected) : !alreadySelected) onSelectLayer(l.id, event.shiftKey);
+          const shouldSelectLayer = inEnteredGroup ? (selectedIds.length !== 1 || !alreadySelected) : !alreadySelected;
+          if (shouldSelectLayer) onSelectLayer(l.id, event.shiftKey);
+          else if (alreadySelected && selectedIds.length === 1) onSelectLayer(l.id);
           const movingIds = inEnteredGroup ? [l.id]
             : (alreadySelected && selectedIds.length > 1) ? selectedIds.slice()
             : grp ? grp : [l.id];
@@ -2024,11 +2773,11 @@ const CanvasFrame = ({
                 <path d="M 30 100 Q 50 60 110 70 L 150 50 L 165 75 Q 175 80 165 95 L 170 110 L 150 130 Q 110 140 80 130 L 50 145 Z" fill={fg} stroke="#0C0A0F" strokeWidth="3" strokeLinejoin="round" />
                 <circle cx="148" cy="78" r="2.5" fill="#0C0A0F" />
               </svg>
-            {soloSelected && <ResizeHandles onResize={startResize} />}
+            {soloSelected && <SelectionHandles onResize={startResize} onRotate={startRotate} />}
           </div>;
         }
         if (l.kind === 'text') {
-          return <EditableTextLayer key={l.id} layer={l} title={title} selected={soloSelected} x={x} y={y} width={lw} height={lh} onPointerDown={startDrag} onResize={startResize} onSave={(value) => onPatchLayer(l.id, { textValue: value })} />;
+          return <EditableTextLayer key={l.id} layer={l} title={title} selected={soloSelected} x={x} y={y} width={lw} height={lh} onPointerDown={startDrag} onResize={startResize} onRotate={startRotate} onSave={(value) => onPatchLayer(l.id, { textValue: value })} />;
         }
         if (l.kind === 'asset') {
           return <div key={l.id} data-layer-id={l.id} onPointerDown={startDrag} onDoubleClick={() => { if (l.groupId) onEnterGroup(l.groupId); }} className={`absolute grid place-items-center ${l.locked ? '' : 'cursor-grab'} ${soloSelected ? 'outline outline-1 outline-[#F36440]' : ''}`} style={{
@@ -2044,7 +2793,7 @@ const CanvasFrame = ({
               {l.src
                 ? <img src={l.src} alt={l.name} draggable={false} className="absolute inset-0 w-full h-full pointer-events-none" style={{ outline: '1px solid rgba(0,0,0,0.1)', objectFit: l.cropMode ?? 'contain', filter: imageFilterStyle(l.filter), borderRadius: l.cornerRadius ? `${l.cornerRadius}px` : undefined }} onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
                 : <ImageIcon className="w-10 h-10 text-white/80" />}
-              {soloSelected && <ResizeHandles onResize={startResize} />}
+              {soloSelected && <SelectionHandles onResize={startResize} onRotate={startRotate} />}
               </div>;
         }
         return null;
@@ -2109,6 +2858,7 @@ const EditableTextLayer = ({
   height,
   onPointerDown,
   onResize,
+  onRotate,
   onSave
 }: {
   layer: Layer;
@@ -2120,6 +2870,7 @@ const EditableTextLayer = ({
   height: number;
   onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
   onResize: (handle: ResizeHandle, event: React.PointerEvent<HTMLElement>) => void;
+  onRotate: (event: React.PointerEvent<HTMLElement>) => void;
   onSave: (value: string) => void;
 }) => {
   const [editing, setEditing] = useState(false);
@@ -2165,7 +2916,7 @@ const EditableTextLayer = ({
     }}>
       {value}
     </div>
-    {selected && !editing && <ResizeHandles onResize={onResize} />}
+    {selected && !editing && <SelectionHandles onResize={onResize} onRotate={onRotate} />}
   </div>;
 };
 
@@ -2182,14 +2933,32 @@ const HANDLE_POSITIONS: Array<{ id: ResizeHandle; className: string; cursor: str
   { id: 'w', className: '-left-1.5 top-1/2 -translate-y-1/2', cursor: 'ew-resize' },
 ];
 
+const SelectionHandles = ({ onResize, onRotate }: { onResize: (handle: ResizeHandle, event: React.PointerEvent<HTMLElement>) => void; onRotate: (event: React.PointerEvent<HTMLElement>) => void }) => <>
+  <button
+    type="button"
+    data-rotate-handle="true"
+    onPointerDown={onRotate}
+    className="absolute left-1/2 z-30 flex h-11 w-11 -translate-x-1/2 items-center justify-center rounded-full border-2 border-[#F36440] bg-white text-[#F36440] shadow-sm md:-top-9 md:h-7 md:w-7 -top-14"
+    style={{ touchAction: 'none' }}
+    aria-label="Rotate layer"
+    title="Rotate layer"
+  >
+    <span className="absolute left-1/2 top-full h-3 w-px -translate-x-1/2 bg-[#F36440] md:h-2" />
+    <RotateCw className="h-4 w-4 md:h-3 md:w-3" />
+  </button>
+  <ResizeHandles onResize={onResize} />
+</>;
+
 const ResizeHandles = ({ onResize }: { onResize: (handle: ResizeHandle, event: React.PointerEvent<HTMLElement>) => void }) => <>
   {HANDLE_POSITIONS.map((handle) => <span
     key={handle.id}
     data-resize-handle={handle.id}
     onPointerDown={(event) => onResize(handle.id, event)}
-    className={`absolute z-20 w-3 h-3 rounded-full bg-white border border-[#F36440] shadow-sm ${handle.className}`}
-    style={{ cursor: handle.cursor }}
-  />)}
+    className={`absolute z-20 h-11 w-11 md:h-3 md:w-3 ${handle.className}`}
+    style={{ cursor: handle.cursor, touchAction: 'none' }}
+  >
+    <span className="absolute left-1/2 top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#F36440] bg-white shadow-sm" />
+  </span>)}
 </>;
 
 // R5 (b): how far an element may hang off any edge (canvas-preview px). Canva-style

@@ -597,6 +597,7 @@ export const MagpieShellV2: React.FC<MagpieShellV2Props> = ({
   const [active, setActive] = React.useState<NavId>(initialNav);
   const [collapsed, setCollapsed] = React.useState(false);
   const [compactViewport, setCompactViewport] = React.useState(false);
+  const [mobileEditorViewport, setMobileEditorViewport] = React.useState(false);
   React.useEffect(() => setActive(initialNav), [initialNav]);
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -606,19 +607,28 @@ export const MagpieShellV2: React.FC<MagpieShellV2Props> = ({
     query.addEventListener('change', sync);
     return () => query.removeEventListener('change', sync);
   }, []);
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const query = window.matchMedia('(max-width: 767px)');
+    const sync = () => setMobileEditorViewport(query.matches);
+    sync();
+    query.addEventListener('change', sync);
+    return () => query.removeEventListener('change', sync);
+  }, []);
   const handleSelect = React.useCallback((id: NavId) => {
     setActive(id);
     onNavChange?.(id);
   }, [onNavChange]);
   const effectiveCollapsed = collapsed || compactViewport;
+  const mobileEditor = active === 'editor' && mobileEditorViewport;
   return <div className="h-dvh w-full flex bg-[#F7F5F1] text-[var(--foreground)] overflow-hidden" style={{
     fontFamily: 'Inter, system-ui'
   }}>
       
-      <Sidebar active={active} onSelect={handleSelect} runtimeStats={runtimeStats} counts={counts} teamCount={teamCount} collapsed={effectiveCollapsed} onToggleCollapsed={() => setCollapsed((value) => !value)} onSettings={onSettings} isOwner={isOwner} />
+      {!mobileEditor && <Sidebar active={active} onSelect={handleSelect} runtimeStats={runtimeStats} counts={counts} teamCount={teamCount} collapsed={effectiveCollapsed} onToggleCollapsed={() => setCollapsed((value) => !value)} onSettings={onSettings} isOwner={isOwner} />}
 
       <div className="flex-1 min-w-0 flex flex-col">
-        <Topbar active={active} onOmniSubmit={onOmniSubmit} omniBusy={omniBusy} onNewCard={onNewCard} onNewSession={onNewSession} onSettings={onSettings} onInbox={onInbox} inboxCount={inboxCount} user={user} />
+        {!mobileEditor && <Topbar active={active} onOmniSubmit={onOmniSubmit} omniBusy={omniBusy} onNewCard={onNewCard} onNewSession={onNewSession} onSettings={onSettings} onInbox={onInbox} inboxCount={inboxCount} user={user} />}
 
         {/* workspace paper sheet - children render here */}
         <main className={`flex-1 min-h-0 ${active === 'editor' ? 'overflow-hidden p-0' : 'overflow-auto px-5 pb-5 pt-4'}`}>

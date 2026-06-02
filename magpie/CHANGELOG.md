@@ -6,6 +6,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); this project is 
 ## [Unreleased]
 
 ### Added
+- **M-204 — mobile editor (responsive, deploy `2c591428`).** Reviewer-verified 🟢 (Thistle). Adds a
+  mobile chrome inside the REAL CardEditor below 768px in ONE component tree (no state fork); desktop
+  four-zone is untouched at ≥768px. Zone re-mapping (not a shrunk desktop): left source rail →
+  **bottom action bar** (图层/素材/模板/AI); right context container → **slide-up inspector bottom-sheet**
+  with peek (quick actions + opacity) and expanded (Transform/Appearance/Effects accordions + context
+  tab strip); layers → **bottom sheet** (reorder/visibility/lock); 素材/模板/AI → bottom sheets; edge
+  states + delete as bottom-sheet AlertDialog (no native confirm). Canvas gestures: tap-select,
+  drag-move, corner-handle resize, snap guides, **rotate handle** (closes the M-201 on-canvas-handle
+  residual), pinch-zoom. Reuses the desktop M-229/M-231/M-232/M-230/M-233 field components + commit
+  paths verbatim. Two-finger rotate deferred to M-238. (Design: 4 MagicPath comps + research in
+  `sources/atelier/magpie-mobile-editor-design-inventory.md`.)
+
 - **M-200 — `batch_generate` agent tool (lazy per-image materialization, deploy `b7d52dfd`).**
   Reviewer-verified 🟢 (Plumb). Adds a 7th agent tool so a run can request multiple images
   (count 1–6) without blocking the Worker agent-run window. A prior synchronous impl timed out
