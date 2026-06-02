@@ -14,7 +14,7 @@ Content-Type: application/json
 ## Required Agent Rules
 
 - Always call cost.check implicitly through the server before chargeable operations.
-- Use assets.search, assets.imagegen.create, copy.draft, compose, and cards.save. Renoise is owner-only and is not part of the agent surface.
+- Use assets.search, assets.imagegen.create, suggest_layout, copy.draft, compose, and cards.save. Renoise is owner-only and is not part of the agent surface.
 - cards.save must include agentRunId, templateVersion, and ruleVersionAtSave provenance. The server evaluates rules on every save.
 - If a card fails rules, requested status=ready is forced to draft and the response includes a 409 rule report unless an owner override is recorded.
 - Image generation has two modes: transparent for isolated small assets; opaque for full posters or hero scenes. Both inject the active palette and Bloome visual DNA unless the user overrides. Optional referenceAssetIds must be 1-3 ready assets owned by the caller; references use the gpt-image-1 image-input/edit path and are rejected for unsupported model paths.
@@ -35,6 +35,7 @@ The agent may chain up to 5 tool iterations (e.g. search → generate → add). 
 - get_brand_rules(cardId) — the card's canonical palette colors + clearspace/letterform thresholds.
 - get_card_layers(cardId) — the card's current layers.
 - add_layer_to_card(cardId, layer) — append a layer { type: text|asset|bg, text?, assetId?, x, y, width, height, opacity?, decoration? }. Caller must be the card creator or owner.
+- suggest_layout(cardId) — return { layers: [{ id, x, y, width, height, rotation? }], rationale } for existing layer ids only. It proposes geometry and writes one LLM cost row; it never creates/deletes layers or generates assets.
 
 Every tool call is recorded in the events table (code=agent_tool_call) for observability.
 
@@ -57,6 +58,8 @@ POST ${baseUrl}/api/public/agent/runs
   body: { prompt, cardId?, sessionId?, referenceAssetIds?: string[] }
 GET ${baseUrl}/api/public/agent/runs/:id
 GET ${baseUrl}/api/public/agent/runs/:id/events
+POST ${baseUrl}/api/public/cards/:id/suggest-layout
+  response: { layers: [{ id, x, y, width, height, rotation? }], rationale }
 GET ${baseUrl}/api/public/palettes
 POST ${baseUrl}/api/public/imagegen
   body: { prompt, dims: { width, height }, mode?, activePaletteId?, quality?, folderId?, name?, referenceAssetIds?: string[] }

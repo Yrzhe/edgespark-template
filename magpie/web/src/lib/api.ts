@@ -97,6 +97,20 @@ export type CardShareResponse = {
   url: string | null;
 };
 
+export type SuggestLayoutLayer = {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation?: number | null;
+};
+
+export type SuggestLayoutResponse = {
+  layers: SuggestLayoutLayer[];
+  rationale?: string | null;
+};
+
 export type PublicShareCard = {
   title?: string | null;
   name?: string | null;
@@ -306,6 +320,8 @@ export const magpieApi = {
       request<{ id: string; status: string; report: RuleReport }>(`/api/public/cards/${encodeURIComponent(id)}`, { method: "PATCH", json: body }),
     ruleReport: (id: string) =>
       request<{ cardId: string; reports: RuleReport[] }>(`/api/public/cards/${encodeURIComponent(id)}/rule-report`),
+    suggestLayout: (id: string) =>
+      request<SuggestLayoutResponse>(`/api/public/cards/${encodeURIComponent(id)}/suggest-layout`, { method: "POST" }),
   },
   shares: {
     get: (cardId: string) =>

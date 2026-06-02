@@ -220,6 +220,10 @@ export type AgentRunView = {
 };
 export type EditorSourceAsset = { id: string; name?: string | null; previewUrl?: string | null; pending?: boolean; width?: number | null; height?: number | null };
 type ProducedAsset = EditorSourceAsset;
+export type LayoutSuggestionLayer = { id: string; x: number; y: number; width: number; height: number; rotation?: number | null };
+export type LayoutSuggestionResult = { layers: LayoutSuggestionLayer[]; rationale?: string | null };
+type LayoutSuggestionState = { loading: boolean; error: string | null; rationale: string | null };
+const EMPTY_LAYOUT_SUGGESTION: LayoutSuggestionState = { loading: false, error: null, rationale: null };
 const REFERENCE_ASSET_LIMIT = 3;
 const isReferenceAssetReady = (asset: EditorSourceAsset) => !!asset.previewUrl && !asset.pending;
 const readyReferenceAssets = (assets: EditorSourceAsset[]) => {
@@ -231,6 +235,32 @@ const readyReferenceAssets = (assets: EditorSourceAsset[]) => {
     ready.push(asset);
   }
   return ready;
+};
+const finiteLayoutNumber = (value: unknown) => {
+  if (value === null || value === undefined || value === '') return null;
+  const numeric = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(numeric) ? Math.round(numeric) : null;
+};
+const buildLayoutSuggestionPatches = (proposed: LayoutSuggestionLayer[], currentLayers: Layer[]) => {
+  const byId = new Map(currentLayers.map((layer) => [layer.id, layer]));
+  const patches: Record<string, Partial<Layer>> = {};
+  for (const suggestion of proposed) {
+    const current = byId.get(suggestion.id);
+    if (!current || current.locked || current.kind === 'bg') continue;
+    const x = finiteLayoutNumber(suggestion.x);
+    const y = finiteLayoutNumber(suggestion.y);
+    const width = finiteLayoutNumber(suggestion.width);
+    const height = finiteLayoutNumber(suggestion.height);
+    const rotation = finiteLayoutNumber(suggestion.rotation);
+    const patch: Partial<Layer> = {};
+    if (x !== null && current.x !== x) patch.x = x;
+    if (y !== null && current.y !== y) patch.y = y;
+    if (width !== null && Math.max(1, width) !== current.width) patch.width = Math.max(1, width);
+    if (height !== null && Math.max(1, height) !== current.height) patch.height = Math.max(1, height);
+    if (rotation !== null && normalizeDegrees(rotation) !== layerRotation(current)) patch.rotation = normalizeDegrees(rotation);
+    if (Object.keys(patch).length) patches[suggestion.id] = patch;
+  }
+  return patches;
 };
 export type RuleReport = {
   passed?: boolean;
@@ -273,6 +303,7 @@ export type CardEditorProps = {
   onPaletteChange?: (paletteId: string) => void;
   onRunAgent?: (prompt: string, referenceAssetIds?: string[]) => void;
   onRetryAgentRun?: (prompt: string, referenceAssetIds?: string[]) => void;
+  onSuggestLayout?: (cardId: string) => Promise<LayoutSuggestionResult>;
   onOpenDerivative?: (id: string) => void;
   onLoadTemplateLayers?: (id: string) => Promise<Layer[]>;
   onCreateShare?: () => Promise<CardEditorShareResult>;
@@ -305,6 +336,7 @@ export const CardEditor = ({
   onPaletteChange,
   onRunAgent,
   onRetryAgentRun,
+  onSuggestLayout,
   onOpenDerivative,
   onLoadTemplateLayers,
   onCreateShare,
@@ -330,6 +362,7 @@ export const CardEditor = ({
   const [agentInput, setAgentInput] = useState('');
   const [agentMode, setAgentMode] = useState<'generate' | 'search' | 'compose'>('generate');
   const [referenceAssets, setReferenceAssets] = useState<EditorSourceAsset[]>([]);
+  const [layoutSuggestion, setLayoutSuggestion] = useState<LayoutSuggestionState>(EMPTY_LAYOUT_SUGGESTION);
   const [derivOpen, setDerivOpen] = useState(false);
   const [layerBusy] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
@@ -380,6 +413,9 @@ export const CardEditor = ({
   useEffect(() => {
     if (card?.layers) setLayers(card.layers);
   }, [card?.id, card?.lockVersion]);
+  useEffect(() => {
+    setLayoutSuggestion(EMPTY_LAYOUT_SUGGESTION);
+  }, [card?.id]);
   // Deselect (drops resize handles + selection outline from the capture), let
   // React paint two frames, then render the frame to the chosen format.
   const handleExport = async (req: ExportRequest) => {
@@ -662,6 +698,35 @@ export const CardEditor = ({
     const next = layers.map((layer) => (patches[layer.id] ? { ...layer, ...patches[layer.id] } : layer));
     void commitLayers(next);
   };
+  const requestLayoutSuggestion = async () => {
+    if (!activeCard || !onSuggestLayout || layoutSuggestion.loading) return;
+    setLayoutSuggestion({ loading: true, error: null, rationale: null });
+    try {
+      const proposal = await onSuggestLayout(activeCard.id);
+      const proposedLayers = Array.isArray(proposal.layers) ? proposal.layers : [];
+      const patches = buildLayoutSuggestionPatches(proposedLayers, layers);
+      if (!Object.keys(patches).length) {
+        setLayoutSuggestion({
+          loading: false,
+          error: t('editor.sourcePanels.ai.suggestEmpty'),
+          rationale: proposal.rationale?.trim() || null,
+        });
+        return;
+      }
+      patchManyLayers(patches);
+      setLayoutSuggestion({
+        loading: false,
+        error: null,
+        rationale: proposal.rationale?.trim() || t('editor.sourcePanels.ai.suggestApplied'),
+      });
+    } catch (err) {
+      setLayoutSuggestion({
+        loading: false,
+        error: err instanceof Error ? err.message : t('editor.sourcePanels.ai.suggestFailed'),
+        rationale: null,
+      });
+    }
+  };
   // R6-editor (4): expand a clicked id to its full group (unless we've entered that group).
   const expandSelection = (id: string): string[] => {
     const layer = layers.find((l) => l.id === id);
@@ -891,6 +956,7 @@ export const CardEditor = ({
         agentRuns={agentRuns}
         agentInput={agentInput}
         agentMode={agentMode}
+        layoutSuggestion={layoutSuggestion}
         derivatives={activeDerivatives}
         enteredGroupId={enteredGroupId}
         frameRef={canvasFrameRef}
@@ -929,6 +995,7 @@ export const CardEditor = ({
         onAgentModeChange={setAgentMode}
         onRunAgentPrompt={runAgentWithReferences}
         onRetryAgentRun={retryAgentWithReferences}
+        onSuggestLayout={() => void requestLayoutSuggestion()}
         onAttachReferenceAsset={attachReferenceAsset}
         onRemoveReferenceAsset={removeReferenceAsset}
         onEnterGroup={setEnteredGroupId}
@@ -965,6 +1032,7 @@ export const CardEditor = ({
           agentRuns={agentRuns}
           agentInput={agentInput}
           agentMode={agentMode}
+          layoutSuggestion={layoutSuggestion}
           derivatives={activeDerivatives}
           onAddTextLayer={addTextLayer}
           onGroupSelection={groupSelection}
@@ -986,6 +1054,7 @@ export const CardEditor = ({
           onAgentModeChange={setAgentMode}
           onRunAgentPrompt={runAgentWithReferences}
           onRetryAgentRun={retryAgentWithReferences}
+          onSuggestLayout={() => void requestLayoutSuggestion()}
           onAttachReferenceAsset={attachReferenceAsset}
           onRemoveReferenceAsset={removeReferenceAsset}
         />
@@ -1088,6 +1157,8 @@ export const CardEditor = ({
             onRemoveReferenceAsset={removeReferenceAsset}
             onRun={runAgentWithReferences}
             onRetry={retryAgentWithReferences}
+            layoutSuggestion={layoutSuggestion}
+            onSuggestLayout={() => void requestLayoutSuggestion()}
             onOpenAgent={() => setRightPanel('agent')}
           /> : rightPanel === 'rules' ? <RulesPanel report={activeCard.ruleReport ?? null} rules={activeRules} onSaveDraft={onSaveDraftAfterRules} /> : <InspectorPanel
             card={activeCard}
@@ -1143,6 +1214,7 @@ type MobileEditorLayoutProps = {
   agentRuns: AgentRunView[];
   agentInput: string;
   agentMode: 'generate' | 'search' | 'compose';
+  layoutSuggestion: LayoutSuggestionState;
   derivatives: Derivative[];
   enteredGroupId: string | null;
   frameRef: Ref<HTMLDivElement>;
@@ -1181,6 +1253,7 @@ type MobileEditorLayoutProps = {
   onAgentModeChange: (value: 'generate' | 'search' | 'compose') => void;
   onRunAgentPrompt?: (prompt: string) => void;
   onRetryAgentRun?: (prompt: string) => void;
+  onSuggestLayout?: () => void;
   onAttachReferenceAsset: (asset: EditorSourceAsset) => void;
   onRemoveReferenceAsset: (id: string) => void;
   onEnterGroup: (gid: string | null) => void;
@@ -1223,6 +1296,7 @@ const MobileEditorLayout = ({
   agentRuns,
   agentInput,
   agentMode,
+  layoutSuggestion,
   derivatives,
   enteredGroupId,
   frameRef,
@@ -1261,6 +1335,7 @@ const MobileEditorLayout = ({
   onAgentModeChange,
   onRunAgentPrompt,
   onRetryAgentRun,
+  onSuggestLayout,
   onAttachReferenceAsset,
   onRemoveReferenceAsset,
   onEnterGroup,
@@ -1357,6 +1432,7 @@ const MobileEditorLayout = ({
         agentRuns={agentRuns}
         agentInput={agentInput}
         agentMode={agentMode}
+        layoutSuggestion={layoutSuggestion}
         derivatives={derivatives}
         onAddTextLayer={onAddTextLayer}
         onGroupSelection={onGroupSelection}
@@ -1378,6 +1454,7 @@ const MobileEditorLayout = ({
         onAgentModeChange={onAgentModeChange}
         onRunAgentPrompt={onRunAgentPrompt}
         onRetryAgentRun={onRetryAgentRun}
+        onSuggestLayout={onSuggestLayout}
         onAttachReferenceAsset={onAttachReferenceAsset}
         onRemoveReferenceAsset={onRemoveReferenceAsset}
       />}
@@ -1696,6 +1773,7 @@ const SourcePanelContent = ({
   agentRuns,
   agentInput,
   agentMode,
+  layoutSuggestion,
   derivatives,
   onAddTextLayer,
   onGroupSelection,
@@ -1717,6 +1795,7 @@ const SourcePanelContent = ({
   onAgentModeChange,
   onRunAgentPrompt,
   onRetryAgentRun,
+  onSuggestLayout,
   onAttachReferenceAsset,
   onRemoveReferenceAsset,
 }: {
@@ -1744,6 +1823,7 @@ const SourcePanelContent = ({
   agentRuns: AgentRunView[];
   agentInput: string;
   agentMode: 'generate' | 'search' | 'compose';
+  layoutSuggestion: LayoutSuggestionState;
   derivatives: Derivative[];
   onAddTextLayer: (preset?: 'headline' | 'subhead' | 'body') => void;
   onGroupSelection: () => void;
@@ -1765,6 +1845,7 @@ const SourcePanelContent = ({
   onAgentModeChange: (value: 'generate' | 'search' | 'compose') => void;
   onRunAgentPrompt?: (prompt: string) => void;
   onRetryAgentRun?: (prompt: string) => void;
+  onSuggestLayout?: () => void;
   onAttachReferenceAsset: (asset: EditorSourceAsset) => void;
   onRemoveReferenceAsset: (id: string) => void;
 }) => {
@@ -1830,10 +1911,12 @@ const SourcePanelContent = ({
       referenceAssets={referenceAssets}
       libraryReferenceAssets={libraryReferenceAssets}
       producedReferenceAssets={producedReferenceAssets}
+      layoutSuggestion={layoutSuggestion}
       onInputChange={onAgentInputChange}
       onModeChange={onAgentModeChange}
       onRun={onRunAgentPrompt}
       onRetry={onRetryAgentRun}
+      onSuggestLayout={onSuggestLayout}
       onAttachReferenceAsset={onAttachReferenceAsset}
       onRemoveReferenceAsset={onRemoveReferenceAsset}
       onOpenAgent={onOpenAgent}
@@ -1984,6 +2067,23 @@ const TextSourcePanel = ({ onAddTextLayer }: { onAddTextLayer: (preset?: 'headli
   </>;
 };
 
+const SuggestLayoutAction = ({ state, onSuggest }: { state: LayoutSuggestionState; onSuggest?: () => void }) => {
+  const { t } = useTranslation();
+  const caption = state.error ?? state.rationale ?? (!onSuggest ? t('editor.sourcePanels.ai.suggestUnavailable') : null);
+  return <div data-m208-suggest-layout className="mt-2 rounded-xl border border-[#f3d0cc] bg-[#fff8f5] px-2.5 py-2">
+    <button
+      type="button"
+      disabled={state.loading || !onSuggest}
+      onClick={onSuggest}
+      className="inline-flex min-h-9 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-[#F36440] px-3 py-2 text-[12px] font-semibold text-white shadow-[0_1px_2px_rgba(20,28,46,0.08)] hover:bg-[#d9532b] disabled:cursor-not-allowed disabled:opacity-55"
+    >
+      {state.loading ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" /> : <LayoutTemplate className="h-3.5 w-3.5 shrink-0" />}
+      <span className="shrink-0 whitespace-nowrap">{state.loading ? t('editor.sourcePanels.ai.suggestLoading') : t('editor.sourcePanels.ai.suggestLayout')}</span>
+    </button>
+    {caption && <div className={`mt-2 text-[11.5px] leading-snug ${state.error ? 'text-[#BC4E32]' : 'text-[#42485a]'}`}>{caption}</div>}
+  </div>;
+};
+
 const AISourcePanel = ({
   input,
   mode,
@@ -1992,10 +2092,12 @@ const AISourcePanel = ({
   referenceAssets,
   libraryReferenceAssets,
   producedReferenceAssets,
+  layoutSuggestion,
   onInputChange,
   onModeChange,
   onRun,
   onRetry,
+  onSuggestLayout,
   onAttachReferenceAsset,
   onRemoveReferenceAsset,
   onOpenAgent,
@@ -2007,10 +2109,12 @@ const AISourcePanel = ({
   referenceAssets: EditorSourceAsset[];
   libraryReferenceAssets: EditorSourceAsset[];
   producedReferenceAssets: EditorSourceAsset[];
+  layoutSuggestion: LayoutSuggestionState;
   onInputChange: (value: string) => void;
   onModeChange: (value: 'generate' | 'search' | 'compose') => void;
   onRun?: (prompt: string) => void;
   onRetry?: (prompt: string) => void;
+  onSuggestLayout?: () => void;
   onAttachReferenceAsset: (asset: EditorSourceAsset) => void;
   onRemoveReferenceAsset: (id: string) => void;
   onOpenAgent: () => void;
@@ -2044,6 +2148,7 @@ const AISourcePanel = ({
             onAttach={onAttachReferenceAsset}
             onRemove={onRemoveReferenceAsset}
           />
+          <SuggestLayoutAction state={layoutSuggestion} onSuggest={onSuggestLayout} />
           <div className="mt-2 flex items-center gap-1.5">
             {(['generate', 'search', 'compose'] as const).map((item) => <button key={item} type="button" onClick={() => onModeChange(item)} className={`shrink-0 whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] ${mode === item ? 'bg-[#F36440] text-white' : 'bg-[#f3f4f6] text-[#42485a] hover:bg-[#eef0f3]'}`}>
               {modeLabels[item]}
@@ -3420,6 +3525,8 @@ const AgentPanel = ({
   onRemoveReferenceAsset,
   onRun,
   onRetry,
+  layoutSuggestion,
+  onSuggestLayout,
   onOpenAgent,
   sessionName
 }: {
@@ -3433,6 +3540,8 @@ const AgentPanel = ({
   onRemoveReferenceAsset: (id: string) => void;
   onRun?: (prompt: string) => void;
   onRetry?: (prompt: string) => void;
+  layoutSuggestion: LayoutSuggestionState;
+  onSuggestLayout?: () => void;
   onOpenAgent: () => void;
   sessionName?: string | null;
 }) => {
@@ -3473,6 +3582,8 @@ const AgentPanel = ({
       onAttach={onAttachReferenceAsset}
       onRemove={onRemoveReferenceAsset}
     />
+
+    <SuggestLayoutAction state={layoutSuggestion} onSuggest={onSuggestLayout} />
 
     {/* Active plan or empty state */}
     {latestFailed ? <AIErrorCard run={latest} onRetry={() => onRetry?.(latest.prompt)} onOpenAgent={onOpenAgent} /> : latest ? <div className="bloome-card overflow-hidden">

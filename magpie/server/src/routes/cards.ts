@@ -13,6 +13,7 @@ import { runToolLoop, type SettledToolCall } from "../lib/agent/loop";
 import type { TurnFn } from "../lib/agent/openai";
 import { AGENT_TOOL_NAMES } from "../lib/agent/tools";
 import { parseReferenceAssetIds, ReferenceAssetError, resolveReferenceAssets } from "../lib/imagegen/references";
+import { LayoutSuggestionError, suggestLayoutForCard } from "../lib/layout/suggest";
 import { evaluateCardRules } from "../lib/rules/engine";
 import { scheduleBackground as scheduleBackgroundTask, withTimeout } from "../lib/background";
 import { reconcileRunRow } from "../lib/reconcile";
@@ -54,6 +55,7 @@ export const cardRoutes = new Hono<AppEnv>()
     return c.json({ rule: publicRule(rule) });
   })
   .get("/cards/:id", async (c) => getCardById(c))
+  .post("/cards/:id/suggest-layout", async (c) => suggestLayoutRoute(c))
   .post("/cards", async (c) => saveCard(c, false))
   .patch("/cards/:id", async (c) => saveCard(c, true))
   .get("/cards/:id/rule-report", async (c) => c.json({ cardId: c.req.param("id"), reports: await db.select().from(cardRuleReports).where(eq(cardRuleReports.cardId, c.req.param("id"))) }));
@@ -81,6 +83,30 @@ async function getCardById(c: any) {
     palette,
     agentRun,
   });
+}
+
+async function suggestLayoutRoute(c: any) {
+  const principal = c.get("principal");
+  const userId = principalUserId(principal);
+  if (!userId) return httpError(c, 401, "user_required", "User principal required.");
+  const body = await c.req.json().catch(() => null);
+  const agentRunId = isRecord(body) && typeof body.agentRunId === "string" ? body.agentRunId : null;
+  if (agentRunId) {
+    const [run] = await db.select().from(agentRuns).where(eq(agentRuns.id, agentRunId)).limit(1);
+    if (!run || run.userId !== userId) return httpError(c, 400, "invalid_agent_run", "agentRunId must belong to the caller.");
+  }
+  try {
+    const result = await suggestLayoutForCard({
+      cardId: c.req.param("id"),
+      userId,
+      isOwner: principal.kind === "owner" || (principal.kind === "user" && principal.role === "owner"),
+      agentRunId,
+    });
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof LayoutSuggestionError) return httpError(c, error.status, error.code, error.message, error.extra);
+    throw error;
+  }
 }
 
 export async function saveCard(c: any, isUpdate: boolean) {

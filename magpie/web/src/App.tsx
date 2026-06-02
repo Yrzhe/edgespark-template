@@ -974,6 +974,7 @@ function EditorRoute() {
       onPaletteChange={setActivePaletteId}
       onRunAgent={(prompt, referenceAssetIds) => void runAgent(prompt, referenceAssetIds)}
       onRetryAgentRun={(prompt, referenceAssetIds) => void runAgent(prompt, referenceAssetIds)}
+      onSuggestLayout={(id) => magpieApi.cards.suggestLayout(id)}
       onOpenDerivative={(id) => navigate(`/editor/${encodeURIComponent(id)}`)}
       onLoadTemplateLayers={loadTemplateLayers}
       onCreateShare={createShare}
@@ -2548,6 +2549,17 @@ function DevEditorHarness() {
       onLoadTemplateLayers={(id) => Promise.resolve(devTemplateLayers[id] ?? [])}
       onRunAgent={runAgent}
       onRetryAgentRun={runAgent}
+      onSuggestLayout={() => Promise.resolve({
+        rationale: "已平衡主视觉、标题和留白。",
+        layers: card.layers.filter((layer) => layer.kind !== "bg").map((layer, index) => ({
+          id: layer.id,
+          x: 52 + index * 28,
+          y: 112 + index * 86,
+          width: Math.max(72, layer.width ?? 220),
+          height: Math.max(48, layer.height ?? 88),
+          rotation: index === 0 ? -2 : 0,
+        })),
+      })}
       onCreateShare={() => Promise.resolve({ url: `${window.location.origin}/share/dev-token`, publicAccess: true } satisfies CardEditorShareResult)}
       onRevokeShare={() => Promise.resolve()}
       onPatchLayers={patchLayers}

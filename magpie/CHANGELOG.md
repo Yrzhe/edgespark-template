@@ -6,6 +6,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); this project is 
 ## [Unreleased]
 
 ### Added
+- **M-208 — AI auto-layout suggestion (code complete; shipped-pending-verify).** A `suggest_layout`
+  agent tool + `POST /api/public/cards/:id/suggest-layout` (`server/src/lib/layout/suggest.ts`) that,
+  given a card's existing layers + canvas + brand rules, asks the LLM for a cleaner arrangement and
+  returns geometry ONLY for existing layer ids (clamped to canvas; no new layers, no asset gen; one
+  LLM cost row; owner/team authz → 403 on foreign card). Web AI panel / mobile sheet "AI 构图建议"
+  button calls it, shows rationale, and applies the proposal through the existing `patchManyLayers`
+  path (undoable, persists to `card_spec_json`). Server-only verified on deploy `260d1dcb` (existing
+  ids only + cost + foreign 403); shared tree green (111 server tests + web build). NOTE: combined
+  deploy + desktop/mobile e2e + independent Thistle verify still PENDING (archived mid-flight).
+
 - **M-209 — multimodal prompt: attach a reference image → generate same-style (deploy `4a938442`).**
   Reviewer-verified 🟢 (Thistle), server (Awl) + web (Forge). The AI panel / mobile bottom-sheet
   lets the user attach 1–3 of their own library assets as style references; the run carries

@@ -1,6 +1,6 @@
-import { describe, expect, it, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
-import { db } from "edgespark";
+import { db, secret } from "edgespark";
 import { auth } from "edgespark/http";
 import { agentRuns, apiKeys, brandRuleVersions, cardRuleReports, cards, teamProfiles } from "@defs";
 import { agentRunRoutes, cardRoutes } from "../src/routes/cards";
@@ -16,6 +16,11 @@ describe("cards v3", () => {
       { id: "run1", userId: "owner", planJson: JSON.stringify({ ruleVersionAtSave: "rule1" }), prompt: "p", provider: "openai", model: "gpt-4o-mini", state: "done", createdAt: 1 },
       { id: "run2", userId: "owner", plannedParentCardId: null, planJson: JSON.stringify({ ruleVersionAtSave: "rule1" }), prompt: "p", provider: "openai", model: "gpt-4o-mini", state: "done", createdAt: 1 },
     ]);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    secret.values.delete("OPENAI_API_KEY");
+    auth.user = undefined;
   });
 
   it("forces failing ready saves to draft and writes a rule report", async () => {
@@ -161,6 +166,72 @@ describe("cards v3", () => {
     const res = await app.request("/api/public/cards/missing");
 
     expect(res.status).toBe(404);
+  });
+
+  it("POST /api/public/cards/:id/suggest-layout returns clamped existing-layer geometry and writes one cost row", async () => {
+    secret.values.set("OPENAI_API_KEY", "sk-test");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            layers: [
+              { id: "headline", x: -30, y: 10, width: 900, height: 80, rotation: 999 },
+              { id: "asset_main", x: 500, y: 350, width: 200, height: 100 },
+              { id: "invented", x: 0, y: 0, width: 50, height: 50 },
+            ],
+            rationale: "Set a clear headline and primary asset hierarchy.",
+          }),
+        },
+      }],
+    }), { status: 200 }));
+    seedCard("card_layout", {
+      width: 600,
+      height: 400,
+      cardSpecJson: JSON.stringify({
+        layers: [
+          { id: "headline", kind: "text", textValue: "Launch faster", x: 20, y: 20, width: 200, height: 60 },
+          { id: "asset_main", kind: "asset", assetId: "asset_leaf", x: 260, y: 120, width: 160, height: 160 },
+        ],
+      }),
+    });
+    const originalSpec = db._tables.get("cards")![0].cardSpecJson;
+    const app = new Hono().route("/api/public", cardRoutes);
+
+    const res = await app.request("/api/public/cards/card_layout/suggest-layout", { method: "POST" });
+
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.layers).toEqual([
+      { id: "headline", x: 0, y: 10, width: 600, height: 80, rotation: 180 },
+      { id: "asset_main", x: 400, y: 300, width: 200, height: 100 },
+    ]);
+    expect(json.rationale).toContain("headline");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(payload.model).toBe("gpt-4o-mini");
+    expect(payload.response_format).toEqual({ type: "json_object" });
+    const costs = db._tables.get("cost_ledger") ?? [];
+    expect(costs).toHaveLength(1);
+    expect(costs[0]).toMatchObject({ userId: "owner", agentRunId: null, operation: "openai.layout.suggest.gpt-4o-mini", costMicros: 4000 });
+    expect(db._tables.get("cards")![0].cardSpecJson).toBe(originalSpec);
+  });
+
+  it("POST /api/public/cards/:id/suggest-layout rejects a foreign card for a non-owner approved user", async () => {
+    auth.user = { id: "member", email: "member@youware.com" };
+    db._seed(teamProfiles, [{ userId: "member", email: "member@youware.com", approvalStatus: "approved", role: "member", createdAt: 1, updatedAt: 1 }]);
+    seedCard("foreign_card", {
+      creatorUserId: "other",
+      cardSpecJson: JSON.stringify({ layers: [{ id: "headline", kind: "text", x: 0, y: 0, width: 100, height: 40 }] }),
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const app = new Hono().route("/api/public", cardRoutes);
+
+    const res = await app.request("/api/public/cards/foreign_card/suggest-layout", { method: "POST" });
+
+    expect(res.status).toBe(403);
+    expect((await res.json()).error.code).toBe("forbidden");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(db._tables.get("cost_ledger")?.length ?? 0).toBe(0);
   });
 
   it("denies pending and rejected users through route middleware", async () => {

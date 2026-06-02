@@ -15,6 +15,7 @@ import {
 import { reservePendingBatchAssets } from "../imagegen/materialize";
 import { plannedMediaS3Uri, storeGeneratedPng } from "../imagegen/store";
 import { parseReferenceAssetIds, ReferenceAssetError, resolveReferenceAssets, type ImageReference } from "../imagegen/references";
+import { LayoutSuggestionError, suggestLayoutForCard } from "../layout/suggest";
 
 // R6 agent tool-use surface. Each tool has an OpenAI function-calling schema and a
 // server-side executor. Executors enforce team-scoping / ownership themselves; the agent
@@ -40,7 +41,7 @@ export interface ToolResult {
   error?: string;
 }
 
-// OpenAI tool/function definitions. Kept deliberately small (V1 = these 7).
+// OpenAI tool/function definitions. Kept deliberately small and server-enforced.
 export const AGENT_TOOLS = [
   {
     type: "function",
@@ -172,6 +173,21 @@ export const AGENT_TOOLS = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "suggest_layout",
+      description:
+        "Suggest new geometry for the existing layers on a card. Returns only layer ids with x/y/width/height/rotation proposals and a rationale. Does not create, delete, or generate anything.",
+      parameters: {
+        type: "object",
+        properties: {
+          cardId: { type: "string", description: "The card id whose existing layers should be rearranged." },
+        },
+        required: ["cardId"],
+      },
+    },
+  },
 ] as const;
 
 export const AGENT_TOOL_NAMES = AGENT_TOOLS.map((t) => t.function.name);
@@ -224,6 +240,8 @@ async function dispatch(name: string, args: Record<string, unknown>, ctx: ToolCo
       return getCardLayers(args);
     case "add_layer_to_card":
       return addLayerToCard(args, ctx);
+    case "suggest_layout":
+      return suggestLayout(args, ctx);
     default:
       return { success: false, result: { error: "unknown_tool" }, resultPreview: { error: "unknown_tool" }, error: `unknown_tool:${name}` };
   }
@@ -464,6 +482,24 @@ async function addLayerToCard(args: Record<string, unknown>, ctx: ToolContext): 
     .set({ cardSpecJson: JSON.stringify(nextSpec), updatedAt: Date.now(), lockVersion: lockVersion + 1 })
     .where(eq(cards.id, cardId));
   return ok({ ok: true, cardId, layerId: layer.id, layerCount: existing.length + 1 }, { tool: "add_layer_to_card", cardId, layerId: layer.id, layerCount: existing.length + 1 });
+}
+
+async function suggestLayout(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
+  const cardId = firstString(args.cardId, ctx.cardId);
+  if (!cardId) return fail("cardId is required");
+  try {
+    const suggestion = await suggestLayoutForCard({ cardId, userId: ctx.userId, isOwner: ctx.isOwner, agentRunId: ctx.runId }, db);
+    return ok(suggestion, {
+      tool: "suggest_layout",
+      cardId,
+      layers: suggestion.layers,
+      layerCount: suggestion.layers.length,
+      rationale: suggestion.rationale,
+    });
+  } catch (error) {
+    if (error instanceof LayoutSuggestionError) return fail(error.code);
+    throw error;
+  }
 }
 
 function buildLayer(type: string, input: Record<string, unknown>): Record<string, unknown> {

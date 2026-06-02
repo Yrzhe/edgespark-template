@@ -34,10 +34,16 @@ function seedCard(overrides: Record<string, unknown> = {}) {
 
 describe("agent tool executors", () => {
   beforeEach(() => { db._reset(); (ctx as any)._background = []; (storage as any)._resetPuts(); });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    secret.values.delete("OPENAI_API_KEY");
+    vars.values.set("DAILY_LLM_BUDGET_USD", "0.02");
+  });
 
-  it("registers batch_generate as the seventh agent tool", () => {
-    expect(AGENT_TOOL_NAMES).toHaveLength(7);
+  it("registers batch_generate and suggest_layout on the agent tool surface", () => {
+    expect(AGENT_TOOL_NAMES).toHaveLength(8);
     expect(AGENT_TOOL_NAMES).toContain("batch_generate");
+    expect(AGENT_TOOL_NAMES).toContain("suggest_layout");
     const single = AGENT_TOOLS.find((t) => t.function.name === "generate_asset");
     expect((single?.function.parameters.properties as any).referenceAssetIds).toMatchObject({ type: "array", maxItems: 3 });
     const tool = AGENT_TOOLS.find((t) => t.function.name === "batch_generate");
@@ -50,6 +56,8 @@ describe("agent tool executors", () => {
       required: ["prompt", "count"],
     });
     expect((tool?.function.parameters.properties as any).referenceAssetIds).toMatchObject({ type: "array", maxItems: 3 });
+    const layout = AGENT_TOOLS.find((t) => t.function.name === "suggest_layout");
+    expect(layout?.function.parameters).toMatchObject({ type: "object", required: ["cardId"] });
   });
 
   it("search_asset really queries the DB and ranks by term matches", async () => {
@@ -93,6 +101,32 @@ describe("agent tool executors", () => {
     expect(res.success).toBe(true);
     expect((res.result as any).colors).toEqual([{ role: "primary", hex: "#2556B6" }]);
     expect((res.result as any).rules.length).toBeGreaterThan(0);
+  });
+
+  it("suggest_layout returns geometry-only proposals and ties cost to the agent run", async () => {
+    secret.values.set("OPENAI_API_KEY", "sk-test");
+    seedCard({
+      width: 500,
+      height: 300,
+      cardSpecJson: JSON.stringify({
+        layers: [
+          { id: "headline", kind: "text", textValue: "Hello", x: 20, y: 20, width: 120, height: 40 },
+          { id: "asset", kind: "asset", assetId: "asset_leaf", x: 200, y: 80, width: 120, height: 120 },
+        ],
+      }),
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({ layers: [{ id: "headline", x: 12, y: 16, width: 220, height: 48 }], rationale: "Headline first." }) } }],
+    }), { status: 200 }));
+
+    const res = await executeTool("suggest_layout", { cardId: "card1" }, OWNER);
+
+    expect(res.success).toBe(true);
+    expect(res.result).toMatchObject({ layers: [{ id: "headline", x: 12, y: 16, width: 220, height: 48 }], rationale: "Headline first." });
+    expect(res.resultPreview).toMatchObject({ tool: "suggest_layout", cardId: "card1", layerCount: 1, success: true });
+    const costs = db._tables.get("cost_ledger") ?? [];
+    expect(costs).toHaveLength(1);
+    expect(costs[0]).toMatchObject({ operation: "openai.layout.suggest.gpt-4o-mini", agentRunId: OWNER.runId, userId: OWNER.userId });
   });
 
   it("add_layer_to_card appends a layer and bumps lockVersion", async () => {
