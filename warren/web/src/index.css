@@ -1,0 +1,153 @@
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap");
+@import "tailwindcss";
+
+@font-face {
+  font-family: "Sora";
+  src: url("/assets/fonts/sora-latin.woff2") format("woff2");
+  font-weight: 100 800;
+  font-display: swap;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-success: var(--success);
+  --color-border: var(--border);
+  --color-ring: var(--ring);
+  --font-sans: var(--font-display);
+  --font-heading: var(--font-display);
+  --font-mono: var(--font-mono);
+}
+
+:root {
+  --background: #F8F6F3;
+  --foreground: #0E0807;
+  --card: #FFFFFF;
+  --card-foreground: #0E0807;
+  --primary: #2556B6;
+  --primary-foreground: #FFFFFF;
+  --muted: #F3ECDF;
+  --muted-foreground: #4A4A4F;
+  --accent: #F36440;
+  --accent-foreground: #FFFFFF;
+  --dark-orange: #BC4E32;
+  --success: #48BB78;
+  --border: #E7E2DA;
+  --ring: #2556B6;
+  --skeleton: #E4DED4;
+  --font-display: "Sora", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  width: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-display);
+  font-size: 15px;
+  line-height: 1.45;
+  letter-spacing: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+code,
+pre,
+.warren-mono {
+  font-family: var(--font-mono);
+}
+
+::selection {
+  background: #FCEAE3;
+  color: var(--foreground);
+}
+
+.warren-display {
+  font-family: var(--font-display);
+  font-weight: 800;
+  line-height: 0.92;
+  letter-spacing: 0;
+}
+
+.warren-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.warren-card-hover {
+  transition: box-shadow 160ms ease, transform 160ms ease;
+}
+
+.warren-card-hover:hover {
+  box-shadow: 0 2px 0 0 var(--foreground);
+  transform: translateY(-1px);
+}
+
+.warren-focus {
+  outline: none;
+}
+
+.warren-focus:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 22%, transparent);
+}
+
+.warren-skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--skeleton);
+}
+
+.warren-skeleton::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.42), transparent);
+  animation: warren-shimmer 1.35s infinite;
+}
+
+@keyframes warren-shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}

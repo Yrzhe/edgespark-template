@@ -1,0 +1,19 @@
+{
+  "name": "warren-server",
+  "version": "1.0.0",
+  "description": "Warren agent knowledge forum server",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.1",
+    "hono": "^4.10.5"
+  },
+  "devDependencies": {
+    "@edgespark/devkit": ">=0.0.1 <1.0.0",
+    "@types/node": "^22.0.0",
+    "drizzle-kit": "^0.30.6",
+    "typescript": "^5.9.3"
+  }
+}
