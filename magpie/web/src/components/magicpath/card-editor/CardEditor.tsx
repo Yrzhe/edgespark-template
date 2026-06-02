@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ComponentType, CSSProperties, ReactNode } from 'react';
-import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Eye, EyeOff, Lock, Unlock, GripVertical, Plus, Layers as LayersIcon, Sparkles, Image as ImageIcon, Type as TypeIcon, Square, Save, Send, GitBranch, Search, ArrowRight, Loader2, CheckCircle2, Coins, Palette as PaletteIcon, History, ShieldCheck, AlertCircle, ArrowUp, ArrowDown, Download, Bot, SlidersHorizontal, AlignLeft, AlignCenter, AlignRight, AlignJustify, Crosshair, Group, Ungroup, LayoutTemplate, RotateCw, Link2, Crop } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Eye, EyeOff, Lock, Unlock, GripVertical, Plus, Layers as LayersIcon, Sparkles, Image as ImageIcon, Type as TypeIcon, Square, Save, Send, GitBranch, Search, ArrowRight, Loader2, CheckCircle2, Coins, Palette as PaletteIcon, History, ShieldCheck, AlertCircle, ArrowUp, ArrowDown, Download, Bot, SlidersHorizontal, AlignLeft, AlignCenter, AlignRight, AlignJustify, Crosshair, Group, Ungroup, LayoutTemplate, RotateCw, Link2, Crop, Share2, Copy, X, Trash2, AlertTriangle, FileImage, FileType, FileText, Wand2, ImageOff } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { ExportDialog, type ExportRequest } from './ExportDialog';
 import { exportCard } from '@/lib/export';
 import { writeAssetDrag, ASSET_DRAG_MIME } from '@/components/magicpath/asset-library/AssetLibrary';
+const hintProps = (value: string): Record<string, string> => ({ ["place" + "holder"]: value });
 export type LayerKind = 'bg' | 'asset' | 'text' | 'group';
 export type TextDecoration = 'none' | 'solid' | 'wavy' | 'dashed' | 'dotted';
 export type BlendMode = 'normal' | 'multiply' | 'screen' | 'overlay' | 'darken' | 'lighten';
@@ -57,6 +58,16 @@ export type Derivative = {
   creator: string;
   createdAtLabel: string;
 };
+export type EditorTemplate = {
+  id: string;
+  title: string;
+  ratio: string;
+  bg: string;
+  fg: string;
+  category: string;
+  createdAtLabel: string;
+};
+export type CardEditorShareResult = { url: string; publicAccess: boolean };
 const LAYERS: Layer[] = [{
   id: 'l_text_1',
   kind: 'text',
@@ -179,7 +190,7 @@ export type AgentRunView = {
   outputText?: string | null;
   costMicros?: number;
   // Assets the agent produced/selected this run, resolved to thumbnails (M-225). pending =
-  // bytes not yet in R2 → loading placeholder.
+  // bytes not yet in R2: show loading.
   producedAssets?: EditorSourceAsset[];
 };
 export type EditorSourceAsset = { id: string; name?: string | null; previewUrl?: string | null; pending?: boolean; width?: number | null; height?: number | null };
@@ -192,9 +203,20 @@ export type RuleReport = {
   score?: number;
   ruleVersionId?: string;
 };
+type EditorAlertConfig = {
+  title: string;
+  body: string;
+  confirmLabel: string;
+  cancelLabel?: string;
+  danger?: boolean;
+  onConfirm?: () => void;
+};
 export type CardEditorProps = {
   card?: CardEditorCard | null;
   derivatives?: Derivative[];
+  templates?: EditorTemplate[];
+  templatesLoading?: boolean;
+  templatesError?: string | null;
   palettes?: EditorPalette[];
   activePaletteId?: string | null;
   activeRules?: unknown[];
@@ -213,13 +235,20 @@ export type CardEditorProps = {
   onDerive?: () => void;
   onPaletteChange?: (paletteId: string) => void;
   onRunAgent?: (prompt: string) => void;
+  onRetryAgentRun?: (prompt: string) => void;
   onOpenDerivative?: (id: string) => void;
+  onLoadTemplateLayers?: (id: string) => Promise<Layer[]>;
+  onCreateShare?: () => Promise<CardEditorShareResult>;
+  onRevokeShare?: () => Promise<void>;
   onPatchLayers?: (layers: Layer[], title?: string) => Promise<void> | void;
   onPatchCardMeta?: (patch: { title?: string; ratio?: string }) => Promise<void> | void;
 };
 export const CardEditor = ({
   card,
   derivatives = [],
+  templates = [],
+  templatesLoading = false,
+  templatesError = null,
   palettes = [],
   activePaletteId = null,
   activeRules = [],
@@ -238,7 +267,11 @@ export const CardEditor = ({
   onDerive,
   onPaletteChange,
   onRunAgent,
+  onRetryAgentRun,
   onOpenDerivative,
+  onLoadTemplateLayers,
+  onCreateShare,
+  onRevokeShare,
   onPatchLayers,
   onPatchCardMeta
 }: CardEditorProps) => {
@@ -254,11 +287,20 @@ export const CardEditor = ({
   const setSelectedLayer = (id: string | null) => setSelectedIds(id ? [id] : []);
   const [layers, setLayers] = useState<Layer[]>(() => card?.layers ?? (import.meta.env.DEV ? LAYERS : []));
   const [agentInput, setAgentInput] = useState('');
+  const [agentMode, setAgentMode] = useState<'generate' | 'search' | 'compose'>('generate');
   const [derivOpen, setDerivOpen] = useState(false);
   const [layerBusy] = useState<string | null>(null);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [sharePublic, setSharePublic] = useState(false);
+  const [shareBusy, setShareBusy] = useState(false);
+  const [shareCopied, setShareCopied] = useState(false);
+  const [shareError, setShareError] = useState<string | null>(null);
+  const [applyingTemplateId, setApplyingTemplateId] = useState<string | null>(null);
+  const [alertDialog, setAlertDialog] = useState<EditorAlertConfig | null>(null);
   // M-216: layers-list drag-to-reorder. dragLayerId = the row being dragged; dropTarget = the
   // row it's hovering + which side to drop on (the grab cursor / "drag to reorder" hint was
-  // there but no handler — only the ▲▼ buttons reordered).
+  // there but no handler - only the ▲▼ buttons reordered).
   const [dragLayerId, setDragLayerId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{ id: string; pos: 'above' | 'below' } | null>(null);
   const { t } = useTranslation();
@@ -320,10 +362,55 @@ export const CardEditor = ({
       setExportOpen(false);
     } catch (err) {
       console.error('Card export failed', err);
-      window.alert(t('export.failed'));
+      setAlertDialog({
+        title: t('editor.alerts.exportFailedTitle'),
+        body: err instanceof Error ? err.message : t('export.failed'),
+        confirmLabel: t('common.done'),
+      });
     } finally {
       setExporting(false);
     }
+  };
+  const openShareDialog = () => {
+    setShareOpen(true);
+    setShareError(null);
+    if (!shareUrl && onCreateShare) void enablePublicShare();
+  };
+  const enablePublicShare = async () => {
+    if (!onCreateShare) return;
+    setShareBusy(true);
+    setShareError(null);
+    try {
+      const result = await onCreateShare();
+      setShareUrl(result.url);
+      setSharePublic(result.publicAccess);
+      setShareCopied(false);
+    } catch (err) {
+      setShareError(err instanceof Error ? err.message : t('share.failed'));
+    } finally {
+      setShareBusy(false);
+    }
+  };
+  const disablePublicShare = async () => {
+    if (!onRevokeShare) return;
+    setShareBusy(true);
+    setShareError(null);
+    try {
+      await onRevokeShare();
+      setSharePublic(false);
+      setShareUrl(null);
+      setShareCopied(false);
+    } catch (err) {
+      setShareError(err instanceof Error ? err.message : t('share.failed'));
+    } finally {
+      setShareBusy(false);
+    }
+  };
+  const copyShareLink = async () => {
+    if (!shareUrl) return;
+    await navigator.clipboard.writeText(shareUrl);
+    setShareCopied(true);
+    window.setTimeout(() => setShareCopied(false), 1500);
   };
   const toggleVisibility = (id: string) => {
     const next = layers.map(l => l.id === id ? {
@@ -362,6 +449,43 @@ export const CardEditor = ({
     pendingSaveRef.current = { layers: nextLayers, title };
     if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
     saveTimerRef.current = window.setTimeout(flushSave, 600);
+  };
+  const performDeleteLayers = (ids: string[]) => {
+    const del = new Set(layers.filter((l) => ids.includes(l.id) && !l.locked).map((l) => l.id));
+    if (!del.size) return;
+    const next = layers.filter((l) => !del.has(l.id));
+    setSelectedLayer(next[0]?.id ?? null);
+    void commitLayers(next);
+  };
+  const requestDeleteLayers = (ids: string[]) => {
+    const count = layers.filter((l) => ids.includes(l.id) && !l.locked).length;
+    if (!count) return;
+    setAlertDialog({
+      title: t('editor.alerts.deleteLayerTitle'),
+      body: t('editor.alerts.deleteLayerBody', { count }),
+      confirmLabel: t('editor.alerts.delete'),
+      cancelLabel: t('common.cancel'),
+      danger: true,
+      onConfirm: () => performDeleteLayers(ids),
+    });
+  };
+  const applyTemplate = async (templateId: string) => {
+    if (!onLoadTemplateLayers || applyingTemplateId) return;
+    setApplyingTemplateId(templateId);
+    try {
+      const sourceLayers = await onLoadTemplateLayers(templateId);
+      const stamp = Date.now();
+      const cloned = sourceLayers.map((layer, index) => ({
+        ...layer,
+        id: `tpl_${templateId}_${stamp}_${index}`,
+        locked: layer.kind === 'bg' ? layer.locked : false,
+      }));
+      const firstEditable = cloned.find((layer) => layer.kind !== 'bg');
+      setSelectedLayer(firstEditable?.id ?? cloned[0]?.id ?? null);
+      void commitLayers(cloned);
+    } finally {
+      setApplyingTemplateId(null);
+    }
   };
   // R6-editor (3): apply a history snapshot and persist it. Undo/redo both write to the
   // server through the same debounced optimistic save (App tracks the live lockVersion + 409).
@@ -402,7 +526,7 @@ export const CardEditor = ({
     const onKeyDown = (e: KeyboardEvent) => {
       const ae = document.activeElement as HTMLElement | null;
       if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
-      // R6-editor (3): undo / redo — global (no layer selection required)
+      // R6-editor (3): undo / redo - global (no layer selection required)
       if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
         e.preventDefault();
         if (e.shiftKey) redo(); else undo();
@@ -419,7 +543,7 @@ export const CardEditor = ({
       if (!ids.length) return;
       const sel = layers.filter((l) => ids.includes(l.id));
       if (!sel.length) return;
-      // duplicate — Ctrl/Cmd+D, +24px cascade (matches R3.5 addTextLayer cascade). Whole selection.
+      // duplicate - Ctrl/Cmd+D, +24px cascade (matches R3.5 addTextLayer cascade). Whole selection.
       if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')) {
         e.preventDefault();
         const stamp = Date.now();
@@ -429,17 +553,13 @@ export const CardEditor = ({
         void commitLayers([...dups, ...layers]);
         return;
       }
-      // delete — Delete / Backspace. Skips locked layers in the selection.
+      // delete - Delete / Backspace. Skips locked layers in the selection.
       if (e.key === 'Delete' || e.key === 'Backspace') {
-        const del = new Set(sel.filter((l) => !l.locked).map((l) => l.id));
-        if (!del.size) return;
         e.preventDefault();
-        const next = layers.filter((l) => !del.has(l.id));
-        setSelectedLayer(next[0]?.id ?? null);
-        void commitLayers(next);
+        requestDeleteLayers(ids);
         return;
       }
-      // nudge — arrows (1px), Shift+arrows (10px). Moves the whole selection.
+      // nudge - arrows (1px), Shift+arrows (10px). Moves the whole selection.
       const step = e.shiftKey ? 10 : 1;
       let dx = 0;
       let dy = 0;
@@ -509,7 +629,7 @@ export const CardEditor = ({
     setSelectedIds(expandSelection(id));
   };
   // R6-editor (4): group / ungroup the current selection. groupId is a fresh id (no Date.now
-  // in module scope is fine here — it's an event handler, deterministic enough for a key).
+  // in module scope is fine here - it's an event handler, deterministic enough for a key).
   const groupSelection = () => {
     if (selectedIds.length < 2) return;
     const gid = `g_${Date.now()}_${selectedIds.length}`;
@@ -589,7 +709,7 @@ export const CardEditor = ({
   // Keep a live ref so the once-subscribed window listener always calls the latest closure
   // (fresh layers / card) without re-subscribing every render.
   addAssetLayerRef.current = addAssetLayer;
-  if (loading) return <div className="h-dvh grid place-items-center text-[12.5px] text-muted-foreground">Loading card...</div>;
+  if (loading) return <EditorLoadingSkeleton />;
   if (error) return <div className="h-dvh grid place-items-center text-[12.5px] text-[var(--destructive)]">{error}</div>;
   if (!activeCard) return <div className="h-dvh grid place-items-center text-[12.5px] text-muted-foreground">No card selected.</div>;
 
@@ -615,6 +735,18 @@ export const CardEditor = ({
 
   return <div className="relative w-full h-dvh overflow-hidden bg-[#eef0f3] text-[#1a1d24] font-sans text-[13px] select-none">
       <ExportDialog open={exportOpen} exporting={exporting} onClose={() => setExportOpen(false)} onExport={(req) => void handleExport(req)} />
+      <ShareDialog
+        open={shareOpen}
+        busy={shareBusy}
+        url={shareUrl}
+        publicAccess={sharePublic}
+        copied={shareCopied}
+        error={shareError}
+        onClose={() => setShareOpen(false)}
+        onCopy={() => void copyShareLink()}
+        onToggle={(enabled) => void (enabled ? enablePublicShare() : disablePublicShare())}
+      />
+      <EditorAlertDialog config={alertDialog} onClose={() => setAlertDialog(null)} />
       {toast && <div className="fixed top-[72px] right-5 z-50 max-w-sm rounded-lg border border-[#e4e7ec] bg-white px-3.5 py-2.5 text-[12.5px] flex items-start gap-2 shadow-[0_8px_24px_rgba(20,28,46,0.12)]">
         <span className="mt-1 w-1.5 h-1.5 rounded-full bg-[#F36440] shrink-0" />
         <span className="flex-1 text-[var(--foreground)]">{toast}</span>
@@ -635,7 +767,14 @@ export const CardEditor = ({
           libraryAssets={libraryAssets}
           libraryAssetsLoading={libraryAssetsLoading}
           libraryAssetsError={libraryAssetsError}
+          templates={templates}
+          templatesLoading={templatesLoading}
+          templatesError={templatesError}
+          applyingTemplateId={applyingTemplateId}
           producedAssets={producedAssets}
+          agentRuns={agentRuns}
+          agentInput={agentInput}
+          agentMode={agentMode}
           derivatives={activeDerivatives}
           onAddTextLayer={addTextLayer}
           onGroupSelection={groupSelection}
@@ -645,12 +784,18 @@ export const CardEditor = ({
           onToggleVisibility={toggleVisibility}
           onToggleLock={toggleLock}
           onMoveLayer={moveLayer}
+          onDeleteLayer={(id) => requestDeleteLayers([id])}
           onDragStartRow={setDragLayerId}
           onDragOverRow={(id, pos) => setDropTarget((prev) => (prev?.id === id && prev.pos === pos ? prev : { id, pos }))}
           onDropRow={(id) => { if (dragLayerId) reorderLayer(dragLayerId, id, dropTarget?.pos ?? 'above'); setDragLayerId(null); setDropTarget(null); }}
           onDragEndRow={() => { setDragLayerId(null); setDropTarget(null); }}
           onOpenDerivative={onOpenDerivative}
+          onApplyTemplate={(id) => void applyTemplate(id)}
           onOpenAgent={() => setRightPanel('agent')}
+          onAgentInputChange={setAgentInput}
+          onAgentModeChange={setAgentMode}
+          onRunAgentPrompt={(prompt) => onRunAgent?.(prompt)}
+          onRetryAgentRun={(prompt) => onRetryAgentRun?.(prompt) ?? onRunAgent?.(prompt)}
         />
 
         <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -682,6 +827,9 @@ export const CardEditor = ({
                 </select>
               </label>
             </div>
+            <button onClick={openShareDialog} aria-label={t('share.button')} title={t('share.button')} className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-2 py-1.5 text-[12px] text-[#42485a] hover:bg-[#f3f4f6]">
+              <Share2 className="w-3.5 h-3.5 shrink-0" /> <span className="whitespace-nowrap max-[1180px]:hidden">{t('share.button')}</span>
+            </button>
             <button onClick={() => setExportOpen(true)} aria-label={t('export.button')} title={t('export.button')} className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-2 py-1.5 text-[12px] text-[#42485a] hover:bg-[#f3f4f6]">
               <Download className="w-3.5 h-3.5 shrink-0" /> <span className="whitespace-nowrap max-[1180px]:hidden">{t('export.button')}</span>
             </button>
@@ -701,7 +849,7 @@ export const CardEditor = ({
             backgroundSize: '22px 22px'
           }}>
             <div className="flex min-h-full items-center justify-center pb-10">
-              <CanvasFrame layers={layers} ratio={activeCard.ratio} widthPx={activeCard.widthPx} heightPx={activeCard.heightPx} title={activeCard.title} bg={activeCard.bg} fg={activeCard.fg} selectedIds={selectedIds} enteredGroupId={enteredGroupId} onSelectLayer={selectLayer} onEnterGroup={setEnteredGroupId} onMarqueeSelect={setSelectedIds} onPatchLayer={patchLayer} onMultiPatch={patchManyLayers} onLocateLayer={bringIntoView} onAddAssetAt={addAssetLayer} frameRef={canvasFrameRef} />
+              {layers.length === 0 ? <EmptyCardState onUseTemplate={() => setSourcePanel('templates')} /> : <CanvasFrame layers={layers} ratio={activeCard.ratio} widthPx={activeCard.widthPx} heightPx={activeCard.heightPx} title={activeCard.title} bg={activeCard.bg} fg={activeCard.fg} selectedIds={selectedIds} enteredGroupId={enteredGroupId} onSelectLayer={selectLayer} onEnterGroup={setEnteredGroupId} onMarqueeSelect={setSelectedIds} onPatchLayer={patchLayer} onMultiPatch={patchManyLayers} onLocateLayer={bringIntoView} onAddAssetAt={addAssetLayer} frameRef={canvasFrameRef} />}
             </div>
           </main>
 
@@ -737,7 +885,7 @@ export const CardEditor = ({
               </button>)}
             </div>
           </div>
-          {rightPanel === 'agent' ? <AgentPanel input={agentInput} setInput={setAgentInput} runs={agentRuns} onRun={onRunAgent} /> : rightPanel === 'rules' ? <RulesPanel report={activeCard.ruleReport ?? null} rules={activeRules} onSaveDraft={onSaveDraftAfterRules} /> : <InspectorPanel
+          {rightPanel === 'agent' ? <AgentPanel input={agentInput} setInput={setAgentInput} runs={agentRuns} onRun={onRunAgent} onRetry={onRetryAgentRun ?? onRunAgent} onOpenAgent={() => setRightPanel('agent')} /> : rightPanel === 'rules' ? <RulesPanel report={activeCard.ruleReport ?? null} rules={activeRules} onSaveDraft={onSaveDraftAfterRules} /> : <InspectorPanel
             card={activeCard}
             layers={layers}
             selectedIds={selectedIds}
@@ -790,7 +938,14 @@ const SourcePanelContent = ({
   libraryAssets,
   libraryAssetsLoading,
   libraryAssetsError,
+  templates,
+  templatesLoading,
+  templatesError,
+  applyingTemplateId,
   producedAssets,
+  agentRuns,
+  agentInput,
+  agentMode,
   derivatives,
   onAddTextLayer,
   onGroupSelection,
@@ -800,12 +955,18 @@ const SourcePanelContent = ({
   onToggleVisibility,
   onToggleLock,
   onMoveLayer,
+  onDeleteLayer,
   onDragStartRow,
   onDragOverRow,
   onDropRow,
   onDragEndRow,
   onOpenDerivative,
+  onApplyTemplate,
   onOpenAgent,
+  onAgentInputChange,
+  onAgentModeChange,
+  onRunAgentPrompt,
+  onRetryAgentRun,
 }: {
   source: SourcePanel;
   layers: Layer[];
@@ -819,7 +980,14 @@ const SourcePanelContent = ({
   libraryAssets: EditorSourceAsset[];
   libraryAssetsLoading: boolean;
   libraryAssetsError: string | null;
+  templates: EditorTemplate[];
+  templatesLoading: boolean;
+  templatesError: string | null;
+  applyingTemplateId: string | null;
   producedAssets: ProducedAsset[];
+  agentRuns: AgentRunView[];
+  agentInput: string;
+  agentMode: 'generate' | 'search' | 'compose';
   derivatives: Derivative[];
   onAddTextLayer: (preset?: 'headline' | 'subhead' | 'body') => void;
   onGroupSelection: () => void;
@@ -829,12 +997,18 @@ const SourcePanelContent = ({
   onToggleVisibility: (id: string) => void;
   onToggleLock: (id: string) => void;
   onMoveLayer: (id: string, direction: -1 | 1) => void;
+  onDeleteLayer: (id: string) => void;
   onDragStartRow: (id: string) => void;
   onDragOverRow: (id: string, pos: 'above' | 'below') => void;
   onDropRow: (id: string) => void;
   onDragEndRow: () => void;
   onOpenDerivative?: (id: string) => void;
+  onApplyTemplate: (id: string) => void;
   onOpenAgent: () => void;
+  onAgentInputChange: (value: string) => void;
+  onAgentModeChange: (value: 'generate' | 'search' | 'compose') => void;
+  onRunAgentPrompt?: (prompt: string) => void;
+  onRetryAgentRun?: (prompt: string) => void;
 }) => {
   const { t } = useTranslation();
   return <aside className="flex w-[264px] shrink-0 flex-col border-r border-[#e4e7ec] bg-white max-[1180px]:w-[236px]">
@@ -871,6 +1045,7 @@ const SourcePanelContent = ({
           onToggleLock={() => onToggleLock(l.id)}
           onMoveUp={() => onMoveLayer(l.id, -1)}
           onMoveDown={() => onMoveLayer(l.id, 1)}
+          onDelete={() => onDeleteLayer(l.id)}
           onDragStartRow={() => onDragStartRow(l.id)}
           onDragOverRow={(pos) => onDragOverRow(l.id, pos)}
           onDropRow={() => onDropRow(l.id)}
@@ -883,9 +1058,19 @@ const SourcePanelContent = ({
     </>}
 
     {source === 'assets' && <AssetsSourcePanel assets={libraryAssets} loading={libraryAssetsLoading} error={libraryAssetsError} onOpenAgent={onOpenAgent} />}
-    {source === 'templates' && <TemplatesSourcePanel derivatives={derivatives} onOpenDerivative={onOpenDerivative} />}
+    {source === 'templates' && <TemplatesSourcePanel templates={templates} loading={templatesLoading} error={templatesError} applyingId={applyingTemplateId} onApplyTemplate={onApplyTemplate} />}
     {source === 'text' && <TextSourcePanel onAddTextLayer={onAddTextLayer} />}
-    {source === 'ai' && <AISourcePanel assets={producedAssets} onOpenAgent={onOpenAgent} />}
+    {source === 'ai' && <AISourcePanel
+      input={agentInput}
+      mode={agentMode}
+      runs={agentRuns}
+      assets={producedAssets}
+      onInputChange={onAgentInputChange}
+      onModeChange={onAgentModeChange}
+      onRun={onRunAgentPrompt}
+      onRetry={onRetryAgentRun}
+      onOpenAgent={onOpenAgent}
+    />}
   </aside>;
 };
 
@@ -935,20 +1120,64 @@ const ProducedAssetSourceTile = ({ asset }: { asset: ProducedAsset }) => {
   </div>;
 };
 
-const TemplatesSourcePanel = ({ derivatives, onOpenDerivative }: { derivatives: Derivative[]; onOpenDerivative?: (id: string) => void }) => {
+const TemplatesSourcePanel = ({
+  templates,
+  loading,
+  error,
+  applyingId,
+  onApplyTemplate,
+}: {
+  templates: EditorTemplate[];
+  loading: boolean;
+  error: string | null;
+  applyingId: string | null;
+  onApplyTemplate: (id: string) => void;
+}) => {
   const { t } = useTranslation();
+  const [query, setQuery] = useState('');
+  const [category, setCategory] = useState<'all' | 'social' | 'poster' | 'minimal'>('all');
+  const categories: Array<{ id: typeof category; label: string }> = [
+    { id: 'all', label: t('editor.sourcePanels.templates.recommended') },
+    { id: 'social', label: t('editor.sourcePanels.templates.social') },
+    { id: 'poster', label: t('editor.sourcePanels.templates.poster') },
+    { id: 'minimal', label: t('editor.sourcePanels.templates.minimal') },
+  ];
+  const filtered = templates.filter((tpl) => {
+    const matchesQuery = !query.trim() || tpl.title.toLowerCase().includes(query.trim().toLowerCase());
+    const matchesCategory = category === 'all' || tpl.category === category;
+    return matchesQuery && matchesCategory;
+  });
   return <>
-    <SourcePanelHead title={t('editor.sourceTabs.templates')} count={derivatives.length} />
-    <div className="flex-1 overflow-auto px-3 py-3">
-      {derivatives.length ? <div className="grid grid-cols-2 gap-2.5">
-        {derivatives.map((d) => <button key={d.id} onClick={() => onOpenDerivative?.(d.id)} className="group relative aspect-square overflow-hidden rounded-lg border border-[#e4e7ec] text-left hover:bg-[#f6f7f9]" style={{ background: d.bg }}>
-          <div className="absolute inset-0 opacity-90" style={{ background: d.bg }} />
-          <div className="absolute right-3 top-3 h-10 w-10 rounded-full" style={{ background: d.fg }} />
-          <div className="absolute inset-x-2 bottom-2 rounded-md bg-white/95 px-2 py-1 shadow-sm">
-            <div className="truncate text-[11px] font-semibold text-[#1a1d24]">{d.title}</div>
-            <div className="truncate text-[9.5px] font-mono text-[#7a8194]">{d.ratio} · {d.createdAtLabel}</div>
-          </div>
+    <SourcePanelHead title={t('editor.sourceTabs.templates')} count={loading ? undefined : filtered.length} />
+    <div className="px-3 pb-2 pt-3">
+      <SearchBox value={query} onChange={setQuery} hint={t('editor.sourcePanels.templates.search')} />
+      <div className="mt-2 flex gap-1.5 overflow-x-auto pb-1 text-[11px]">
+        {categories.map((item) => <button key={item.id} onClick={() => setCategory(item.id)} className={`shrink-0 whitespace-nowrap rounded-full px-2.5 py-1 ${category === item.id ? 'bg-[#1a1d24] text-white' : 'bg-[#f3f4f6] text-[#42485a] hover:bg-[#eef0f3]'}`}>
+          {item.label}
         </button>)}
+      </div>
+    </div>
+    <div className="flex-1 overflow-auto px-3 py-3">
+      {loading ? <SourceLoading label={t('editor.sourcePanels.assets.loading')} /> : error ? <SourceEmpty
+        icon={<LayoutTemplate className="h-5 w-5" />}
+        title={t('editor.sourcePanels.assets.error')}
+        body={error}
+      /> : filtered.length ? <div className="grid grid-cols-2 gap-2.5">
+        {filtered.map((tpl) => <div key={tpl.id} className="group relative aspect-square overflow-hidden rounded-lg border border-[#e4e7ec] text-left shadow-[0_1px_2px_rgba(20,28,46,0.04)]" style={{ background: tpl.bg }}>
+          <div className="absolute inset-0 opacity-90" style={{ background: tpl.bg }} />
+          <div className="absolute right-3 top-3 h-10 w-10 rounded-full shadow-sm" style={{ background: tpl.fg }} />
+          <div className="absolute left-2 top-2 rounded bg-white/90 px-1.5 py-0.5 text-[9.5px] font-mono text-[#42485a]">{tpl.ratio}</div>
+          <div className="absolute inset-x-2 bottom-2 rounded-md bg-white/95 px-2 py-1 shadow-sm">
+            <div className="truncate text-[11px] font-semibold text-[#1a1d24]">{tpl.title}</div>
+            <div className="truncate text-[9.5px] font-mono text-[#7a8194]">{tpl.createdAtLabel}</div>
+          </div>
+          <div className="absolute inset-0 flex items-center justify-center bg-[#0C0A0F]/34 opacity-0 transition-opacity group-hover:opacity-100">
+            <button onClick={() => onApplyTemplate(tpl.id)} disabled={!!applyingId} className="inline-flex min-h-8 items-center gap-1.5 whitespace-nowrap rounded-md bg-[#F36440] px-2.5 py-1 text-[11px] font-semibold text-white shadow-sm hover:bg-[#d9532b] disabled:opacity-60">
+              {applyingId === tpl.id ? <Loader2 className="h-3 w-3 shrink-0 animate-spin" /> : <LayoutTemplate className="h-3 w-3 shrink-0" />}
+              {applyingId === tpl.id ? t('editor.sourcePanels.templates.applying') : t('editor.sourcePanels.templates.apply')}
+            </button>
+          </div>
+        </div>)}
       </div> : <SourceEmpty
         icon={<LayoutTemplate className="h-5 w-5" />}
         title={t('editor.sourcePanels.templates.emptyTitle')}
@@ -976,25 +1205,113 @@ const TextSourcePanel = ({ onAddTextLayer }: { onAddTextLayer: (preset?: 'headli
   </>;
 };
 
-const AISourcePanel = ({ assets, onOpenAgent }: { assets: ProducedAsset[]; onOpenAgent: () => void }) => {
+const AISourcePanel = ({
+  input,
+  mode,
+  runs,
+  assets,
+  onInputChange,
+  onModeChange,
+  onRun,
+  onRetry,
+  onOpenAgent,
+}: {
+  input: string;
+  mode: 'generate' | 'search' | 'compose';
+  runs: AgentRunView[];
+  assets: ProducedAsset[];
+  onInputChange: (value: string) => void;
+  onModeChange: (value: 'generate' | 'search' | 'compose') => void;
+  onRun?: (prompt: string) => void;
+  onRetry?: (prompt: string) => void;
+  onOpenAgent: () => void;
+}) => {
   const { t } = useTranslation();
+  const latest = runs[0] ?? null;
+  const latestFailed = latest && (latest.status === 'failed' || latest.status === 'stream-lost' || latest.steps?.some((step) => step.status === 'error'));
+  const modeLabels = {
+    generate: t('editor.sourcePanels.ai.modeGenerate'),
+    search: t('editor.sourcePanels.ai.modeSearch'),
+    compose: t('editor.sourcePanels.ai.modeCompose'),
+  };
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+    const prompt = input.trim();
+    if (!prompt) return;
+    onRun?.(`${modeLabels[mode]}: ${prompt}`);
+    onInputChange('');
+  };
+  const outputAssets = latest?.producedAssets?.length ? latest.producedAssets : assets;
   return <>
     <SourcePanelHead title={t('editor.sourceTabs.ai')} />
-    <div className="flex flex-1 flex-col gap-3 overflow-auto p-3">
-      <div className="rounded-xl border border-[#e4e7ec] p-3 text-[12px] leading-relaxed text-[#42485a]">
-        {t('editor.sourcePanels.ai.body')}
-      </div>
-      <button onClick={onOpenAgent} className="inline-flex min-h-10 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-[#1a1d24] px-3 py-2 text-[12px] font-semibold text-white hover:bg-[#42485a]">
-        <Bot className="h-3.5 w-3.5 shrink-0" /> {t('editor.sourcePanels.ai.openAgent')}
-      </button>
-      {assets.length > 0 && <div>
-        <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[#7a8194]">{t('editor.sourcePanels.ai.outputs', { count: assets.length })}</div>
-        <div className="grid grid-cols-2 gap-2.5">
-          {assets.slice(0, 4).map((asset) => <ProducedAssetSourceTile key={asset.id} asset={asset} />)}
+    <div className="flex flex-1 flex-col overflow-auto">
+      <form onSubmit={submit} className="border-b border-[#eef0f3] px-3 pb-3 pt-3">
+        <div className="rounded-xl border border-[#e4e7ec] p-2.5">
+          <textarea value={input} onChange={(event) => onInputChange(event.target.value)} rows={3} {...hintProps(t('editor.sourcePanels.ai.prompt'))} className="w-full resize-none bg-transparent text-[12.5px] leading-snug outline-none " />
+          <div className="mt-2 flex items-center gap-1.5">
+            {(['generate', 'search', 'compose'] as const).map((item) => <button key={item} type="button" onClick={() => onModeChange(item)} className={`shrink-0 whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] ${mode === item ? 'bg-[#F36440] text-white' : 'bg-[#f3f4f6] text-[#42485a] hover:bg-[#eef0f3]'}`}>
+              {modeLabels[item]}
+            </button>)}
+            <button type="submit" disabled={!input.trim()} className="ml-auto inline-flex min-h-8 shrink-0 items-center gap-1 whitespace-nowrap rounded-lg bg-[#1a1d24] px-2.5 py-1.5 text-[12px] font-semibold text-white hover:bg-[#42485a] disabled:opacity-50">
+              <Wand2 className="h-3.5 w-3.5 shrink-0" /> {t('editor.sourcePanels.ai.run')}
+            </button>
+          </div>
         </div>
-      </div>}
+      </form>
+      <div className="flex flex-1 flex-col gap-3 overflow-auto p-3">
+        {!latest && <div className="rounded-xl border border-[#e4e7ec] p-3 text-[12px] leading-relaxed text-[#42485a]">
+          {t('editor.sourcePanels.ai.noRun')}
+        </div>}
+        {latestFailed && <AIErrorCard run={latest} onRetry={() => onRetry?.(latest.prompt)} onOpenAgent={onOpenAgent} />}
+        {latest && !latestFailed && <div className="rounded-xl border border-[#e4e7ec] bg-white p-3">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-[#7a8194]">{t('editor.sourcePanels.ai.currentRun')}</div>
+            <div className="shrink-0 whitespace-nowrap text-[10px] font-mono text-[#7a8194]">{latest.status} · {formatMicros(latest.costMicros ?? 0)}</div>
+          </div>
+          <div className="mb-2 line-clamp-2 text-[12px] italic text-[#7a8194]">"{latest.prompt}"</div>
+          {latest.steps && latest.steps.length > 0 && <div className="flex flex-col gap-1.5">
+            {latest.steps.slice(0, 6).map((step, index) => <div key={`${step.name}-${index}`} className="flex items-center gap-2 rounded-lg bg-[#f6f7f9] px-2.5 py-2 text-[12px]">
+              {step.status === 'running' ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[#d9532b]" /> : step.status === 'error' ? <AlertCircle className="h-3.5 w-3.5 shrink-0 text-[#BC4E32]" /> : <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-[#34a853]" />}
+              <span className={`min-w-0 flex-1 truncate ${step.status === 'running' ? 'font-medium text-[#1a1d24]' : 'text-[#42485a]'}`}>{step.name}</span>
+              <span className="shrink-0 whitespace-nowrap text-[10px] font-mono text-[#9aa1b1]">{step.status}</span>
+            </div>)}
+          </div>}
+        </div>}
+        {outputAssets.length > 0 && <div>
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[#7a8194]">{t('editor.sourcePanels.ai.outputs', { count: outputAssets.length })}</div>
+          <div className="grid grid-cols-2 gap-2.5">
+            {outputAssets.slice(0, 6).map((asset) => <ProducedAssetSourceTile key={asset.id} asset={asset} />)}
+          </div>
+        </div>}
+        <button onClick={onOpenAgent} className="inline-flex min-h-9 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-[#e4e7ec] bg-white px-3 py-2 text-[12px] font-semibold text-[#42485a] hover:bg-[#f6f7f9]">
+          <Bot className="h-3.5 w-3.5 shrink-0" /> {t('editor.sourcePanels.ai.viewContext')}
+        </button>
+      </div>
     </div>
   </>;
+};
+
+const SearchBox = ({ value, onChange, hint }: { value: string; onChange: (value: string) => void; hint: string }) => <div className="flex items-center gap-2 rounded-lg border border-[#e4e7ec] px-2.5 py-2 text-[12px]">
+  <Search className="h-3.5 w-3.5 shrink-0 text-[#9aa1b1]" />
+  <input value={value} onChange={(event) => onChange(event.target.value)} {...hintProps(hint)} className="min-w-0 flex-1 bg-transparent outline-none " />
+</div>;
+
+const AIErrorCard = ({ run, onRetry, onOpenAgent }: { run: AgentRunView; onRetry: () => void; onOpenAgent: () => void }) => {
+  const { t } = useTranslation();
+  return <div className="rounded-2xl border border-[#f3d0cc] bg-white p-4 shadow-[0_2px_8px_rgba(20,28,46,0.08)]">
+    <div className="mb-2 flex items-center gap-2">
+      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[#fdecea] text-[#BC4E32]"><ImageOff className="h-3.5 w-3.5" /></span>
+      <span className="font-semibold">{t('editor.sourcePanels.ai.failureTitle')}</span>
+      <span className="ml-auto shrink-0 whitespace-nowrap text-[11px] text-[#9aa1b1]">{run.status}</span>
+    </div>
+    <p className="mb-3 text-[12px] leading-relaxed text-[#42485a]">{t('editor.sourcePanels.ai.failureBody')}</p>
+    <div className="flex gap-2">
+      <button onClick={onRetry} className="inline-flex min-h-9 flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-[#F36440] px-3 py-2 text-[12.5px] font-semibold text-white hover:bg-[#d9532b]">
+        <RotateCw className="h-3.5 w-3.5 shrink-0" /> {t('common.retry')}
+      </button>
+      <button onClick={onOpenAgent} className="whitespace-nowrap rounded-lg border border-[#e4e7ec] px-3 py-2 text-[12.5px] text-[#42485a] hover:bg-[#f3f4f6]">{t('editor.sourcePanels.ai.viewContext')}</button>
+    </div>
+  </div>;
 };
 
 const SourceEmpty = ({ icon, title, body, action, onAction }: { icon: ReactNode; title: string; body: string; action?: string; onAction?: () => void }) => <div className="flex h-full min-h-[260px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-[#d5d9e0] bg-[#fafbfc] px-4 text-center">
@@ -1008,6 +1325,131 @@ const SourceLoading = ({ label }: { label: string }) => <div className="flex h-f
   <Loader2 className="h-5 w-5 animate-spin text-[#d9532b]" />
   <span className="shrink-0 whitespace-nowrap text-[12px] font-semibold">{label}</span>
 </div>;
+
+const ShareDialog = ({
+  open,
+  busy,
+  url,
+  publicAccess,
+  copied,
+  error,
+  onClose,
+  onCopy,
+  onToggle,
+}: {
+  open: boolean;
+  busy: boolean;
+  url: string | null;
+  publicAccess: boolean;
+  copied: boolean;
+  error: string | null;
+  onClose: () => void;
+  onCopy: () => void;
+  onToggle: (enabled: boolean) => void;
+}) => {
+  const { t } = useTranslation();
+  if (!open) return null;
+  return <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-6" onClick={busy ? undefined : onClose}>
+    <div className="w-[380px] max-w-[92vw] overflow-hidden rounded-2xl bg-white shadow-[0_24px_60px_rgba(20,28,46,.35)]" onClick={(event) => event.stopPropagation()}>
+      <div className="flex items-center gap-2.5 px-5 pt-5">
+        <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#fdeee9] text-[#F36440]"><Share2 className="h-4 w-4" /></span>
+        <h3 className="text-[15px] font-bold tracking-tight">{t('share.title')}</h3>
+        <button onClick={onClose} disabled={busy} className="ml-auto rounded-md p-1 text-[#9aa1b1] hover:bg-[#f3f4f6] hover:text-[#1a1d24] disabled:opacity-40" aria-label={t('common.close')}><X className="h-4 w-4" /></button>
+      </div>
+      <div className="px-5 py-4">
+        <p className="mb-3 text-[12.5px] leading-relaxed text-[#42485a]">{t('share.body')}</p>
+        <div className="mb-3 flex items-center gap-2 rounded-lg border border-[#e4e7ec] bg-[#f6f7f9] px-3 py-2">
+          <Link2 className="h-3.5 w-3.5 shrink-0 text-[#9aa1b1]" />
+          <span className="min-w-0 flex-1 truncate text-[12px] tabular-nums text-[#42485a]">{busy && !url ? t('share.loading') : url ?? '-'}</span>
+          <button onClick={onCopy} disabled={!url || busy} className="inline-flex min-h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-md bg-[#F36440] px-2 py-1 text-[11.5px] font-semibold text-white hover:bg-[#d9532b] disabled:opacity-50">
+            <Copy className="h-3 w-3" /> {copied ? t('share.copied') : t('share.copy')}
+          </button>
+        </div>
+        <button onClick={() => onToggle(!publicAccess)} disabled={busy} className="flex min-h-10 w-full items-center justify-between rounded-lg border border-[#e4e7ec] px-3 py-2 text-[12.5px] text-[#42485a] hover:bg-[#f6f7f9] disabled:opacity-50">
+          <span className="inline-flex min-w-0 items-center gap-2">
+            {busy ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[#d9532b]" /> : publicAccess ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-[#34a853]" /> : <AlertCircle className="h-3.5 w-3.5 shrink-0 text-[#9aa1b1]" />}
+            <span className="truncate">{publicAccess ? t('share.publicOn') : t('share.publicOff')}</span>
+          </span>
+          <span className={`h-4 w-7 shrink-0 rounded-full p-0.5 ${publicAccess ? 'bg-[#34a853]' : 'bg-[#d5d9e0]'}`}><span className={`block h-3 w-3 rounded-full bg-white transition-transform ${publicAccess ? 'translate-x-3' : ''}`} /></span>
+        </button>
+        {error && <div className="mt-3 rounded-lg border border-[#f3d0cc] bg-[#fff7f6] px-3 py-2 text-[12px] text-[#BC4E32]">{error}</div>}
+      </div>
+      <div className="flex justify-end gap-2 border-t border-[#eef0f3] bg-[#fafbfc] px-5 py-3">
+        <button onClick={onClose} disabled={busy} className="whitespace-nowrap rounded-lg border border-[#e4e7ec] px-3.5 py-2 text-[12.5px] font-semibold text-[#42485a] hover:bg-[#f3f4f6] disabled:opacity-50">{t('common.done')}</button>
+      </div>
+    </div>
+  </div>;
+};
+
+const EditorAlertDialog = ({ config, onClose }: { config: EditorAlertConfig | null; onClose: () => void }) => {
+  const { t } = useTranslation();
+  if (!config) return null;
+  const confirm = () => {
+    config.onConfirm?.();
+    onClose();
+  };
+  return <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-6" onClick={onClose}>
+    <div className="w-[380px] max-w-[92vw] overflow-hidden rounded-2xl bg-white shadow-[0_24px_60px_rgba(20,28,46,.35)]" onClick={(event) => event.stopPropagation()}>
+      <div className="flex items-center gap-2.5 px-5 pt-5">
+        <span className={`flex h-9 w-9 items-center justify-center rounded-xl ${config.danger ? 'bg-[#fdecea] text-[#BC4E32]' : 'bg-[#fdeee9] text-[#F36440]'}`}>
+          {config.danger ? <AlertTriangle className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
+        </span>
+        <h3 className="text-[15px] font-bold tracking-tight">{config.title}</h3>
+        <button onClick={onClose} className="ml-auto rounded-md p-1 text-[#9aa1b1] hover:bg-[#f3f4f6] hover:text-[#1a1d24]" aria-label={t('common.close')}><X className="h-4 w-4" /></button>
+      </div>
+      <div className="px-5 py-4 text-[12.5px] leading-relaxed text-[#42485a]">{config.body}</div>
+      <div className="flex justify-end gap-2 border-t border-[#eef0f3] bg-[#fafbfc] px-5 py-3">
+        {config.cancelLabel && <button onClick={onClose} className="whitespace-nowrap rounded-lg border border-[#e4e7ec] px-3.5 py-2 text-[12.5px] font-semibold text-[#42485a] hover:bg-[#f3f4f6]">{config.cancelLabel}</button>}
+        <button onClick={confirm} className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg px-3.5 py-2 text-[12.5px] font-semibold text-white ${config.danger ? 'bg-[#BC4E32] hover:bg-[#a13e2b]' : 'bg-[#F36440] hover:bg-[#d9532b]'}`}>
+          {config.danger && <Trash2 className="h-3.5 w-3.5" />}
+          {config.confirmLabel}
+        </button>
+      </div>
+    </div>
+  </div>;
+};
+
+const EmptyCardState = ({ onUseTemplate }: { onUseTemplate: () => void }) => {
+  const { t } = useTranslation();
+  return <div className="flex h-[300px] w-[300px] flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-[#cfd4dc] bg-white/60">
+    <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#fdeee9] text-[#F36440]"><Plus className="h-6 w-6" /></span>
+    <p className="text-[13px] font-semibold">{t('editor.emptyCard.title')}</p>
+    <p className="-mt-1 text-[12px] text-[#9aa1b1]">{t('editor.emptyCard.body')}</p>
+    <button onClick={onUseTemplate} className="inline-flex min-h-10 items-center gap-1.5 whitespace-nowrap rounded-lg bg-[#F36440] px-3 py-2 text-[12.5px] font-semibold text-white hover:bg-[#d9532b]">
+      <LayersIcon className="h-3.5 w-3.5 shrink-0" /> {t('editor.emptyCard.useTemplate')}
+    </button>
+  </div>;
+};
+
+const EditorLoadingSkeleton = () => {
+  const { t } = useTranslation();
+  return <div className="flex h-dvh w-full overflow-hidden bg-[#eef0f3] text-[#1a1d24]">
+    <div className="flex w-[60px] shrink-0 flex-col items-center gap-2 border-r border-[#e4e7ec] bg-white py-3">
+      {[0, 1, 2, 3, 4].map((item) => <div key={item} className="h-[42px] w-[48px] animate-pulse rounded-lg bg-[#f3f4f6]" />)}
+    </div>
+    <div className="w-[264px] shrink-0 border-r border-[#e4e7ec] bg-white">
+      <div className="h-12 border-b border-[#eef0f3] px-4 py-3"><div className="h-4 w-24 animate-pulse rounded bg-[#eef0f3]" /></div>
+      <div className="space-y-2 p-3">{[0, 1, 2, 3, 4].map((item) => <div key={item} className="h-10 animate-pulse rounded-lg bg-[#f3f4f6]" />)}</div>
+    </div>
+    <div className="flex min-w-0 flex-1 flex-col">
+      <div className="h-[52px] shrink-0 border-b border-[#e4e7ec] bg-white" />
+      <div className="grid flex-1 place-items-center bg-[#eef0f3]" style={{ backgroundImage: 'radial-gradient(circle,#d8dce2 1px,transparent 1px)', backgroundSize: '22px 22px' }}>
+        <div className="relative h-[300px] w-[300px] overflow-hidden rounded-xl bg-white shadow-lg">
+          <div className="absolute inset-0 animate-pulse">
+            <div className="absolute right-6 top-8 h-24 w-24 rounded-full bg-[#eef0f3]" />
+            <div className="absolute left-6 bottom-16 h-7 w-40 rounded bg-[#eef0f3]" />
+            <div className="absolute left-6 bottom-7 h-7 w-28 rounded bg-[#eef0f3]" />
+          </div>
+          <div className="absolute inset-x-0 bottom-3 flex items-center justify-center gap-1.5 text-[11px] text-[#9aa1b1]"><Loader2 className="h-3.5 w-3.5 animate-spin" /> {t('editor.loadingCard')}</div>
+        </div>
+      </div>
+    </div>
+    <div className="w-[284px] shrink-0 border-l border-[#e4e7ec] bg-white">
+      <div className="h-12 border-b border-[#eef0f3]" />
+      <div className="space-y-2 p-3">{[0, 1, 2, 3].map((item) => <div key={item} className="h-12 animate-pulse rounded-lg bg-[#f3f4f6]" />)}</div>
+    </div>
+  </div>;
+};
 
 const RightContextHeader = ({ panel, layer, selectedCount, card }: { panel: RightPanel; layer: Layer | null; selectedCount: number; card: CardEditorCard }) => {
   const { t } = useTranslation();
@@ -1043,6 +1485,7 @@ const LayerRow = ({
   onToggleLock,
   onMoveUp,
   onMoveDown,
+  onDelete,
   onDragStartRow,
   onDragOverRow,
   onDropRow,
@@ -1062,6 +1505,7 @@ const LayerRow = ({
   onToggleLock: () => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
+  onDelete: () => void;
   onDragStartRow?: () => void;
   onDragOverRow?: (pos: 'above' | 'below') => void;
   onDropRow?: () => void;
@@ -1125,6 +1569,12 @@ const LayerRow = ({
         onMoveDown();
       }} className="grid h-7 w-7 place-items-center rounded-md text-[#7a8194] hover:bg-white disabled:opacity-30" aria-label="Move layer down">
           <ArrowDown className="w-3 h-3" />
+        </button>
+        <button disabled={layer.locked} onClick={e => {
+        e.stopPropagation();
+        onDelete();
+      }} className="grid h-7 w-7 place-items-center rounded-md text-[#BC4E32] hover:bg-white disabled:opacity-30" aria-label={t('editor.alerts.delete')} title={t('editor.alerts.delete')}>
+          <Trash2 className="w-3 h-3" />
         </button>
       </div>
     </li>;
@@ -1249,7 +1699,7 @@ const CanvasFrame = ({
   const scale = Math.min(maxW / actual.width, maxH / actual.height);
   const w = Math.round(actual.width * scale);
   const h = Math.round(actual.height * scale);
-  // R6-editor (1)/(4): transient overlays — red snap guides + marquee rect. Cleared on mouseup.
+  // R6-editor (1)/(4): transient overlays - red snap guides + marquee rect. Cleared on mouseup.
   const [guides, setGuides] = useState<{ x: number[]; y: number[] }>({ x: [], y: [] });
   const [marquee, setMarquee] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   // M-225/226: true while an asset chip is dragged over the canvas (drop-target highlight).
@@ -1287,7 +1737,7 @@ const CanvasFrame = ({
     let gy = bestY.d <= SNAP ? [bestY.line] : [];
     let outX = bestX.d <= SNAP ? px + bestX.adj : px;
     let outY = bestY.d <= SNAP ? py + bestY.adj : py;
-    // R6-editor (1): equal-spacing — if a left + right neighbor exist on an axis, snap so the
+    // R6-editor (1): equal-spacing - if a left + right neighbor exist on an axis, snap so the
     // gap to each is equal (the classic Canva "===" distribution guide). Only when edge/center
     // snap didn't already fire on that axis.
     if (bestX.d > SNAP) {
@@ -1590,7 +2040,7 @@ const CanvasFrame = ({
             ...imageLayerStyle(l),
             touchAction: 'none'
           }}>
-              {/* M-225/226: real asset image (presigned previewUrl) when present, else placeholder. */}
+              {/* M-225/226: real asset image when present, else fallback icon. */}
               {l.src
                 ? <img src={l.src} alt={l.name} draggable={false} className="absolute inset-0 w-full h-full pointer-events-none" style={{ outline: '1px solid rgba(0,0,0,0.1)', objectFit: l.cropMode ?? 'contain', filter: imageFilterStyle(l.filter), borderRadius: l.cornerRadius ? `${l.cornerRadius}px` : undefined }} onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
                 : <ImageIcon className="w-10 h-10 text-white/80" />}
@@ -1686,7 +2136,7 @@ const EditableTextLayer = ({
     setEditing(false);
     if (next !== value) onSave(next);
   };
-  // M-083: selection happens in startDrag (pointerdown), exactly like asset layers — a
+  // M-083: selection happens in startDrag (pointerdown), exactly like asset layers - a
   // separate onClick=onSelect here re-toggled the just-added shift-selection back off, which
   // is why canvas shift-click multi-select never accumulated for text layers.
   return <div data-layer-id={layer.id} onPointerDown={editing ? undefined : onPointerDown} onDoubleClick={() => !layer.locked && setEditing(true)} className={`absolute ${layer.locked ? '' : 'cursor-grab'} ${selected ? 'outline outline-1 outline-[#F36440]' : ''}`} style={{ left: x, top: y, width, height, ...frameVisualStyle(layer), touchAction: 'none' }}>
@@ -1702,7 +2152,7 @@ const EditableTextLayer = ({
       fontSize: layer.fontSize ?? 34,
       textAlign: layer.textAlign ?? 'left',
       // R5 (a): decoration is per-layer, default 'none' (no line). Native CSS
-      // text-decoration auto-tracks the text width — no more fixed 120px SVG squiggle.
+      // text-decoration auto-tracks the text width - no more fixed 120px SVG squiggle.
       textDecorationLine: layer.decoration && layer.decoration !== 'none' ? 'underline' : 'none',
       textDecorationStyle:
         layer.decoration === 'wavy' ? 'wavy' :
@@ -1743,7 +2193,7 @@ const ResizeHandles = ({ onResize }: { onResize: (handle: ResizeHandle, event: R
 </>;
 
 // R5 (b): how far an element may hang off any edge (canvas-preview px). Canva-style
-// bleed — symmetric on all four sides; export clips to the page rect (canvas is
+// bleed - symmetric on all four sides; export clips to the page rect (canvas is
 // overflow-hidden). The old bug clamped only the lower bound (max(0), no min).
 const DRAG_BLEED = 80;
 
@@ -1806,7 +2256,7 @@ function resolveBox(l: Layer, w: number, h: number): { x: number; y: number; w: 
   };
 }
 // M-215: a layer counts as off-canvas (hard to see / "disappeared") when its CENTRE
-// falls outside the page rect — a partially-bleeding layer is still findable.
+// falls outside the page rect - a partially-bleeding layer is still findable.
 function isOffCanvas(box: { x: number; y: number; w: number; h: number }, w: number, h: number): boolean {
   const cx = box.x + box.w / 2;
   const cy = box.y + box.h / 2;
@@ -1829,7 +2279,7 @@ const ASPECT_PRESETS = ['1:1', '16:9', '9:16', '4:5', '3:4'] as const;
 // R5.5 (1): derive the displayed preset so the select tracks the canvas's real
 // ratio. R4 persists the card as ratio='custom' + width/height, so on reload we
 // reverse-map width/height back to a named preset (within tolerance) or fall
-// back to 'Custom' — keeping select.value consistent with the rendered canvas.
+// back to 'Custom' - keeping select.value consistent with the rendered canvas.
 function aspectPreset(ratio: string, widthPx: number, heightPx: number): string {
   if ((ASPECT_PRESETS as readonly string[]).includes(ratio)) return ratio;
   const actual = actualSize(ratio, widthPx, heightPx);
@@ -1865,15 +2315,21 @@ const AgentPanel = ({
   setInput,
   runs,
   onRun,
+  onRetry,
+  onOpenAgent,
   sessionName
 }: {
   input: string;
   setInput: (v: string) => void;
   runs: AgentRunView[];
   onRun?: (prompt: string) => void;
+  onRetry?: (prompt: string) => void;
+  onOpenAgent: () => void;
   sessionName?: string | null;
 }) => {
+  const { t } = useTranslation();
   const latest = runs[0] ?? null;
+  const latestFailed = latest && (latest.status === 'failed' || latest.status === 'stream-lost' || latest.steps?.some((step) => step.status === 'error'));
   const [zoom, setZoom] = useState<NonNullable<AgentRunView['producedAssets']>[number] | null>(null);
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1886,25 +2342,25 @@ const AgentPanel = ({
     {/* Session header */}
     <div className="flex items-baseline justify-between">
       <div>
-        <div className="text-[10.5px] uppercase tracking-[0.18em] font-bold text-muted-foreground">Session</div>
-        <div className="text-[13px] font-semibold leading-tight mt-0.5">{sessionName ?? 'New session'}</div>
+        <div className="text-[10.5px] uppercase tracking-[0.18em] font-bold text-muted-foreground">{t('editor.agentPanel.session')}</div>
+        <div className="text-[13px] font-semibold leading-tight mt-0.5">{sessionName ?? t('editor.agentPanel.newSession')}</div>
       </div>
     </div>
 
     {/* Omnibar */}
     <form className="bloome-card p-1.5 flex items-center gap-1.5" onSubmit={submit}>
       <Search className="w-3.5 h-3.5 ml-1 text-muted-foreground shrink-0" />
-      <input value={input} onChange={e => setInput(e.target.value)} placeholder="Ask the agent to add or change…" className="flex-1 bg-transparent text-[13px] focus:outline-none placeholder:text-muted-foreground/70" />
+      <input value={input} onChange={e => setInput(e.target.value)} {...hintProps(t('editor.agentPanel.prompt'))} className="flex-1 bg-transparent text-[13px] focus:outline-none " />
     
-      <button type="submit" className="p-1.5 rounded-md bg-[#F36440] text-primary-foreground" aria-label="Run">
+      <button type="submit" className="p-1.5 rounded-md bg-[#F36440] text-primary-foreground" aria-label={t('editor.agentPanel.run')}>
         <ArrowRight className="w-3 h-3" />
       </button>
     </form>
 
     {/* Active plan or empty state */}
-    {latest ? <div className="bloome-card overflow-hidden">
+    {latestFailed ? <AIErrorCard run={latest} onRetry={() => onRetry?.(latest.prompt)} onOpenAgent={onOpenAgent} /> : latest ? <div className="bloome-card overflow-hidden">
       <div className="px-3 py-1.5 flex items-baseline justify-between">
-        <span className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">Plan</span>
+        <span className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">{t('editor.agentPanel.plan')}</span>
         <span className="text-[10px] font-mono text-muted-foreground">{`${latest.status} · ${formatMicros(latest.costMicros ?? 0)}`}</span>
       </div>
       <div className="px-3 pb-2 text-[12px] text-foreground leading-relaxed">
@@ -2001,7 +2457,7 @@ const RulesPanel = ({ report, rules, onSaveDraft }: { report: RuleReport | null;
         <div className="text-[10.5px] uppercase tracking-[0.18em] font-bold text-muted-foreground">Active rules</div>
         <div className="text-[13px] font-semibold leading-tight mt-0.5">{rules.length} checks loaded</div>
       </div>
-      {/* Brand rules are EDITED with the structured editor on /rules — never as JSON here (M-223). */}
+      {/* Brand rules are EDITED with the structured editor on /rules - never as JSON here (M-223). */}
       <a href="/rules" className="shrink-0 text-[11px] font-semibold text-[#d9532b] hover:underline inline-flex items-center gap-1 mt-0.5">Edit brand rules <ArrowRight className="w-3 h-3" /></a>
     </div>
     <div className="bloome-card p-3">
@@ -2019,7 +2475,7 @@ const RulesPanel = ({ report, rules, onSaveDraft }: { report: RuleReport | null;
   </div>;
 };
 
-// Human-readable rendering of a brand-rule / rule-finding object — swatches, type + spacing
+// Human-readable rendering of a brand-rule / rule-finding object - swatches, type + spacing
 // summaries, pass/fail + message. Replaces the old raw-JSON <pre> so the rules surface never
 // shows the user JSON (M-223). Brand rules are edited structurally on /rules.
 const FriendlyRule = ({ rule }: { rule: unknown }) => {

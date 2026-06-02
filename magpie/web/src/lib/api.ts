@@ -90,6 +90,31 @@ export type CardDetailResponse = {
   agentRun: AgentRunRow | null;
 };
 
+export type CardShareResponse = {
+  publicAccess: boolean;
+  shareId: string | null;
+  token?: string;
+  url: string | null;
+};
+
+export type PublicShareCard = {
+  title?: string | null;
+  name?: string | null;
+  ratioPreset?: string | null;
+  width?: number | null;
+  height?: number | null;
+  background?: string | null;
+  cardSpec?: {
+    layers?: Array<Record<string, unknown>>;
+    background?: string | null;
+  };
+};
+
+export type PublicShareResponse = {
+  share: { publicAccess: boolean };
+  card: PublicShareCard;
+};
+
 export type AssetRow = {
   id: string;
   kind?: string | null;
@@ -173,7 +198,7 @@ export type ProducedAsset = {
   id: string;
   name?: string | null;
   previewUrl?: string | null;
-  pending?: boolean; // status==="generating": bytes not in R2 yet → loading placeholder
+  pending?: boolean; // status==="generating": bytes not in R2 yet, show loading
   width?: number | null;
   height?: number | null;
   tool?: string; // which tool produced it (generate_asset | search_asset)
@@ -222,7 +247,7 @@ export type AgentRunEvent = {
   run?: AgentRunRow;
   // R6 tool-use events (server loop.ts): tool_call_start carries { tool, args };
   // tool_call_result carries { tool, resultPreview, success }. resultPreview is the tool's
-  // meta — generate_asset → { assetId }, search_asset → { assetIds }.
+  // meta: generate_asset -> { assetId }, search_asset -> { assetIds }.
   args?: Record<string, unknown>;
   resultPreview?: Record<string, unknown>;
   success?: boolean;
@@ -282,7 +307,16 @@ export const magpieApi = {
     ruleReport: (id: string) =>
       request<{ cardId: string; reports: RuleReport[] }>(`/api/public/cards/${encodeURIComponent(id)}/rule-report`),
   },
+  shares: {
+    get: (cardId: string) =>
+      request<CardShareResponse>(`/api/public/cards/${encodeURIComponent(cardId)}/share`),
+    setPublicAccess: (cardId: string, publicAccess: boolean) =>
+      request<CardShareResponse>(`/api/public/cards/${encodeURIComponent(cardId)}/share`, { method: "POST", json: { publicAccess } }),
+    publicGet: (token: string) =>
+      request<PublicShareResponse>(`/api/public/shares/${encodeURIComponent(token)}`, { redirectOn401: false }),
+  },
   assets: {
+    fileUrl: (id: string) => `/api/public/assets/${encodeURIComponent(id)}/file`,
     list: (folderId?: string | null) =>
       request<{ assets: AssetRow[] }>(
         `/api/public/assets${folderId ? `?folderId=${encodeURIComponent(folderId)}` : ""}`

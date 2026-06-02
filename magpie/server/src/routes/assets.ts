@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { db, ctx } from "edgespark";
+import { db, ctx, storage } from "edgespark";
 import { and, eq } from "drizzle-orm";
 import { assetFolders, assets, cards } from "@defs";
 import { buildPresignedGetPlaceholder, describeAssetFromUrl, safePresignPreview } from "../lib/description/autotag";
@@ -40,6 +40,23 @@ export const assetRoutes = new Hono<AppEnv>()
     if (!found || found.deletedAt) return httpError(c, 404, "not_found", "Asset not found.");
     const row = await reconcileAssetRow(found); // M-102 layer 2: stale generating → failed
     return c.json({ asset: await publicAsset(row) });
+  })
+  .get("/assets/:id/file", async (c) => {
+    const found = await assetById(c.req.param("id"));
+    if (!found || found.deletedAt) return httpError(c, 404, "not_found", "Asset not found.");
+    const row = await reconcileAssetRow(found);
+    if (assetStatus(row) !== "ready") return httpError(c, 404, "asset_not_ready", "Asset bytes are not ready.");
+    const parsed = storage.tryParseS3Uri(row.s3Uri);
+    if (!parsed) return httpError(c, 404, "asset_not_fetchable", "Asset bytes are not fetchable.");
+    const object = await storage.from(parsed.bucket).get(parsed.path);
+    if (!object) return httpError(c, 404, "asset_bytes_missing", "Asset bytes not found.");
+    return new Response(object.body, {
+      status: 200,
+      headers: {
+        "Content-Type": row.contentType || object.metadata.contentType || "application/octet-stream",
+        "Cache-Control": "private, max-age=300",
+      },
+    });
   })
   .post("/assets", async (c) => {
     const principal = c.get("principal");

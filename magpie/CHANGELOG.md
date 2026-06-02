@@ -5,7 +5,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); this project is 
 
 ## [Unreleased]
 
+### Security
+- **M-237 — public share API no longer leaks internal DB identifiers (deploy `8eae887c`).** The
+  anonymous `GET /api/public/shares/:token` response returned `share.id`, `card.id`, `parentCardId`,
+  `cardRootId`, `paletteId`, **`ownerUserId`**, `lockVersion`, timestamps, `ruleReport.id/ruleVersionId`,
+  and DB layer ids. It now returns an explicit public DTO — `share.publicAccess` + card
+  title/canvas/background/`cardSpec.layers` render fields only — with all DB identifiers, owner id,
+  provenance, and raw storage URIs stripped. New opaque token-scoped `GET /api/public/share-assets/:key`
+  serves image bytes so `src` can't leak asset DB ids through R2 paths; the web public mapper derives
+  local React ids. Authenticated owner/editor responses unchanged. Reviewer-verified clean-context
+  (Thistle): recursive key-path + raw-value scan found no forbidden ids/URIs.
+
 ### Changed
+- **Editor v2 — Phase 3 (templates / AI panels / share / export / edge states, deploy `a52326b3`).**
+  Reviewer-verified 🟢 (Thistle).
+  - **M-233** — left-rail Templates panel (search + category chips + thumbnail grid + hover 套用,
+    real empty state, no fake tiles) and AI panel (prompt + generate/search/compose chips + run steps +
+    retryable failure card + produced-asset strip), reusing the existing agent run / per-card
+    persistence / SSE replay / produced-asset machinery.
+  - **M-234** — Share read-only public link (`POST/GET /api/public/cards/:id/share`,
+    `GET /api/public/shares/:token`) with 复制 + public-access toggle, and enhanced Export dialog
+    (PNG/JPG/PDF · 1x/2x/4x · transparent toggle disabled-with-reason for non-PNG). Added authenticated
+    same-origin `GET /api/public/assets/:id/file` so asset-backed exports get real bytes.
+  - **M-235** — edge states: dashed empty-card guide (`用模板开始`), loading skeleton, retryable
+    AI-failure/orphan card; native `window.confirm/alert` replaced with custom AlertDialog for
+    destructive actions.
+
 - **Editor v2 — Phase 2 (contextual right-inspector, deploy `b7037dc1`).** The right context
   container's 属性 surface now swaps content by selection; 智能体 / 品牌规则 remain sibling surfaces.
   Independently prod-verified by reviewer (Thistle) — every image control persists to

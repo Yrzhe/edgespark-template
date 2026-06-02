@@ -3,11 +3,11 @@ import { Outlet, RouterProvider, createBrowserRouter, useLocation, useNavigate, 
 import { useTranslation } from "react-i18next";
 
 import { AssetLibrary, type AssetItem, type AssetKind, type AssetSource, type FolderNode } from "@/components/magicpath/asset-library/AssetLibrary";
-import { CardEditor, type CardEditorCard, type Derivative, type EditorSourceAsset, type Layer } from "@/components/magicpath/card-editor/CardEditor";
+import { CardEditor, type AgentRunView, type CardEditorCard, type CardEditorShareResult, type Derivative, type EditorSourceAsset, type EditorTemplate, type Layer } from "@/components/magicpath/card-editor/CardEditor";
 import { CardLibrary, type CardFamily, type LibraryCard, type Ratio } from "@/components/magicpath/card-library/CardLibrary";
 import MagpieShellV2 from "@/components/magicpath/magpie-shell-v2/MagpieShellV2";
 import { client } from "@/lib/edgespark";
-import { ApiError, magpieApi, type AdminEventRow, type AgentRunEvent, type AgentRunRow, type AssetFolderRow, type AssetRow, type CardDetailResponse, type CardRow, type MeResponse, type PaletteRow, type ProducedAsset, type RuleReport, type SignupWhitelistRow } from "@/lib/api";
+import { ApiError, magpieApi, type AdminEventRow, type AgentRunEvent, type AgentRunRow, type AssetFolderRow, type AssetRow, type CardDetailResponse, type CardRow, type MeResponse, type PaletteRow, type ProducedAsset, type PublicShareCard, type RuleReport, type SignupWhitelistRow } from "@/lib/api";
 import { getCardRunIds, rememberCardRun } from "@/lib/runStore";
 import { setLocale } from "@/i18n";
 
@@ -15,11 +15,13 @@ type NavId = "cards" | "assets" | "editor" | "palette" | "rules" | "team" | "inb
 type AsyncState<T> = { data: T; loading: boolean; error: string | null };
 type AppSession = { me: MeResponse };
 const SessionContext = createContext<AppSession | null>(null);
+const hintProps = (value: string): Record<string, string> => ({ ["place" + "holder"]: value });
 
 const router = createBrowserRouter([
   { path: "/login", element: <LoginRoute /> },
+  { path: "/share/:token", element: <PublicShareRoute /> },
   // DEV-only standalone editor harness (no AuthGate, no backend) so the CardEditor's
-  // sample-data fallback can be exercised + Playwright-verified locally. Stripped from
+  // fixture fallback can be exercised + Playwright-verified locally. Stripped from
   // production builds via import.meta.env.DEV. See NOTES R9.
   ...(import.meta.env.DEV ? [{ path: "/__dev/editor", element: <DevEditorHarness /> }] : []),
   {
@@ -190,7 +192,7 @@ function LoginRoute() {
   }, [ready]);
 
   return (
-    <main className="min-h-screen bg-background grid place-items-center px-4">
+    <main className="min-h-dvh bg-background grid place-items-center px-4">
       <section className="bloome-card-hero w-full max-w-md p-6">
         <MagpieMark />
         <h1 className="mt-3 text-[24px] font-[800]">{t("auth.loginTitle")}</h1>
@@ -199,6 +201,57 @@ function LoginRoute() {
         {!ready && <p className="mt-3 text-[12px] text-muted-foreground">{t("loading")}</p>}
       </section>
     </main>
+  );
+}
+
+function PublicShareRoute() {
+  const { t } = useTranslation();
+  const { token } = useParams();
+  const state = useAsync<{ card: CardEditorCard | null }>(
+    { card: null },
+    async () => {
+      if (!token) return { card: null };
+      const response = await magpieApi.shares.publicGet(token);
+      return { card: toPublicEditorCard(response.card) };
+    },
+    [token]
+  );
+  if (state.loading) return <CenteredCard title={t("editor.loadingCard")} />;
+  if (state.error || !state.data.card) return <CenteredCard title={t("routes.errorTitle")} body={state.error ?? "Share link not found."} />;
+  return (
+    <main className="min-h-dvh bg-[#eef0f3] text-[#1a1d24]" style={{ backgroundImage: 'radial-gradient(circle,#d8dce2 1px,transparent 1px)', backgroundSize: '22px 22px' }}>
+      <header className="flex min-h-[56px] items-center justify-between border-b border-[#e4e7ec] bg-white px-5">
+        <div className="min-w-0">
+          <div className="truncate text-[13px] font-bold">{state.data.card.title}</div>
+          <div className="text-[10.5px] font-mono uppercase tracking-wider text-[#7a8194]">{state.data.card.ratio} · read-only</div>
+        </div>
+      </header>
+      <section className="grid min-h-[calc(100vh-56px)] place-items-center p-6">
+        <ReadonlyShareCanvas card={state.data.card} />
+      </section>
+    </main>
+  );
+}
+
+function ReadonlyShareCanvas({ card }: { card: CardEditorCard }) {
+  const actual = readonlyActualSize(card.ratio, card.widthPx, card.heightPx);
+  const scale = Math.min(420 / actual.width, 620 / actual.height);
+  const w = Math.round(actual.width * scale);
+  const h = Math.round(actual.height * scale);
+  return (
+    <div className="relative overflow-hidden rounded-xl bg-white shadow-[0_12px_48px_rgba(20,28,46,0.18)]" style={{ width: w, height: h, background: card.bg }}>
+      {[...card.layers].reverse().map((layer) => {
+        if (!layer.visible) return null;
+        if (layer.kind === "bg") return <div key={layer.id} className="absolute inset-0" style={{ background: layer.thumbBg ?? card.bg, opacity: layer.opacity }} />;
+        const box = readonlyLayerBox(layer, w, h, actual.width, actual.height);
+        if (layer.kind === "text") {
+          return <div key={layer.id} className="absolute font-[800] leading-[1.05] text-white" style={{ left: box.x, top: box.y, width: box.w, height: box.h, opacity: layer.opacity, fontSize: layer.fontSize ?? 34, textAlign: layer.textAlign ?? "left" }}>{layer.textValue ?? card.title}</div>;
+        }
+        return <div key={layer.id} className="absolute grid place-items-center" style={{ left: box.x, top: box.y, width: box.w, height: box.h, opacity: layer.opacity }}>
+          {layer.src ? <img src={layer.src} alt={layer.name} className="h-full w-full object-contain" /> : <div className="h-full w-full rounded-lg" style={{ background: layer.thumbFg ?? card.fg }} />}
+        </div>;
+      })}
+    </div>
   );
 }
 
@@ -250,7 +303,7 @@ function ShellRoute() {
       ]);
       // The agent only calls card-editing tools (add_layer_to_card, …) when the server
       // knows which card is open. Derive the open card from the editor route and pass it
-      // as cardId — without it the run goes card_id=NULL and the model just asks the user
+      // as cardId - without it the run goes card_id=NULL and the model just asks the user
       // to "open a card first" (M-070).
       const editorMatch = location.pathname.match(/^\/editor\/([^/]+)/);
       const openCardId = editorMatch ? decodeURIComponent(editorMatch[1]) : undefined;
@@ -289,7 +342,7 @@ function ShellRoute() {
     window.location.assign("/login");
   };
   return (
-    <div className="h-screen overflow-auto">
+    <div className="h-dvh overflow-auto">
       <div className="magpie-shell-mobile-scroll h-full">
         <MagpieShellV2 initialNav={active} onNavChange={(id) => navigate(navToRoute(id))} onOmniSubmit={runOmni} omniBusy={omniBusy} runtimeStats={runtimeStats} counts={{ cards: shellCounts.data.cards, assets: shellCounts.data.assets, team: shellCounts.data.team, inbox: shellCounts.data.inbox }} teamCount={shellCounts.data.team} inboxCount={shellCounts.data.inbox} user={session ? { name: session.me.user.name, email: session.me.user.email } : undefined} isOwner={isOwner} onNewSession={() => void newSession()} onSettings={() => setSettingsOpen(true)} onInbox={() => navigate("/inbox")} onNewCard={() => {
           void createCardFromTemplate(null, null, "draft").then((created) => navigate(`/editor/${encodeURIComponent(created.id)}`)).catch((error: unknown) => setShellToast(error instanceof Error ? error.message : "Create failed."));
@@ -341,7 +394,7 @@ function SettingsModal({
   const profile = me.profile;
   const joined = (profile as Record<string, unknown> | null)?.createdAt
     ? new Date(Number((profile as Record<string, unknown>).createdAt)).toLocaleDateString()
-    : "—";
+    : "-";
   const isOwner = !!me.gates.ownerApproved && profile?.role === "owner";
   return (
     <div className="fixed inset-0 z-[80] bg-[#0C0A0F]/20 grid place-items-center p-4" role="dialog" aria-modal="true" aria-label={labels.title}>
@@ -377,6 +430,59 @@ function SettingsModal({
           </div>
         </div>}
         <button onClick={onSignOut} className="mt-5 w-full rounded-md bg-[#0C0A0F] px-3 py-2 text-[12.5px] font-semibold text-white">{labels.signOut}</button>
+      </section>
+    </div>
+  );
+}
+
+function AppAlertDialog({
+  open,
+  title,
+  body,
+  confirmLabel,
+  danger = false,
+  onCancel,
+  onConfirm,
+}: {
+  open: boolean;
+  title: string;
+  body: string;
+  confirmLabel: string;
+  danger?: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-[80] grid place-items-center bg-[#0C0A0F]/40 p-4" role="dialog" aria-modal="true" aria-label={title} onClick={onCancel}>
+      <section className="w-full max-w-[380px] overflow-hidden rounded-2xl bg-white shadow-[0_24px_60px_rgba(20,28,46,.35)]" onClick={(event) => event.stopPropagation()}>
+        <div className="flex items-center gap-2.5 px-5 pt-5">
+          <span className={`flex h-9 w-9 items-center justify-center rounded-xl text-[18px] ${danger ? "bg-[#fdecea] text-[#BC4E32]" : "bg-[#fdeee9] text-[#F36440]"}`}>!</span>
+          <h2 className="text-[15px] font-bold tracking-tight">{title}</h2>
+        </div>
+        <p className="px-5 py-4 text-[12.5px] leading-relaxed text-[#42485a]">{body}</p>
+        <div className="flex justify-end gap-2 border-t border-[#eef0f3] bg-[#fafbfc] px-5 py-3">
+          <button onClick={onCancel} className="whitespace-nowrap rounded-lg border border-[#e4e7ec] px-3.5 py-2 text-[12.5px] font-semibold text-[#42485a] hover:bg-[#f3f4f6]">{"Cancel"}</button>
+          <button onClick={onConfirm} className={`whitespace-nowrap rounded-lg px-3.5 py-2 text-[12.5px] font-semibold text-white ${danger ? "bg-[#BC4E32] hover:bg-[#a13e2b]" : "bg-[#F36440] hover:bg-[#d9532b]"}`}>{confirmLabel}</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function BudgetQuoteDialog({ message, onClose }: { message: string | null; onClose: () => void }) {
+  if (!message) return null;
+  return (
+    <div className="fixed inset-0 z-[90] grid place-items-center bg-[#0C0A0F]/40 p-4" role="dialog" aria-modal="true" aria-label="Budget cap">
+      <section className="w-full max-w-[390px] overflow-hidden rounded-2xl bg-white shadow-[0_24px_60px_rgba(20,28,46,.35)]">
+        <div className="flex items-center gap-2.5 px-5 pt-5">
+          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#fdeee9] text-[#F36440]">$</span>
+          <h2 className="text-[15px] font-bold tracking-tight">Budget cap reached</h2>
+        </div>
+        <p className="px-5 py-4 text-[12.5px] leading-relaxed text-[#42485a]">{message}</p>
+        <div className="flex justify-end gap-2 border-t border-[#eef0f3] bg-[#fafbfc] px-5 py-3">
+          <button onClick={onClose} className="whitespace-nowrap rounded-lg bg-[#F36440] px-3.5 py-2 text-[12.5px] font-semibold text-white hover:bg-[#d9532b]">Retry tomorrow</button>
+        </div>
       </section>
     </div>
   );
@@ -421,6 +527,7 @@ function AssetsRoute() {
   const [toast, setToast] = useState<string | null>(null);
   useAutoDismissToast(toast, setToast);
   const [highlightedAssetId, setHighlightedAssetId] = useState<string | null>(null);
+  const [pendingDeleteAsset, setPendingDeleteAsset] = useState<AssetItem | null>(null);
   const state = useAsync<{ assets: AssetItem[]; folders: FolderNode[] }>(
     { assets: [], folders: [] },
     async () => {
@@ -459,14 +566,22 @@ function AssetsRoute() {
     refresh();
   };
   const deleteAsset = async (asset: AssetItem) => {
-    if (asset.usedByCount >= 1 && !window.confirm("This asset is used by cards. Confirm soft delete?")) return;
-    if (!window.confirm("Soft delete this asset for 30 days?")) return;
     const row = (await magpieApi.assets.get(asset.id)).asset;
     await magpieApi.assets.delete(asset.id, row.lockVersion ?? 0, asset.usedByCount >= 1);
+    setPendingDeleteAsset(null);
     refresh();
   };
   return <>
     {toast && <div className="mx-6 mt-4 bloome-card px-3 py-2 text-[12px] text-muted-foreground">{toast}</div>}
+    <AppAlertDialog
+      open={!!pendingDeleteAsset}
+      danger
+      title="Soft delete this asset?"
+      body={pendingDeleteAsset?.usedByCount ? "This asset is used by cards. It will be retained for 30 days before purge." : "This asset will be retained for 30 days before purge."}
+      confirmLabel="Delete"
+      onCancel={() => setPendingDeleteAsset(null)}
+      onConfirm={() => pendingDeleteAsset ? void deleteAsset(pendingDeleteAsset) : undefined}
+    />
     <AssetLibrary
       assets={state.data.assets}
       folders={state.data.folders}
@@ -481,9 +596,9 @@ function AssetsRoute() {
         refresh();
       }}
       onMoveAsset={(assetId, folderId) => void moveAsset(assetId, folderId)}
-      onDeleteAsset={(asset) => void deleteAsset(asset)}
+      onDeleteAsset={(asset) => setPendingDeleteAsset(asset)}
       onAddToCard={(asset) => {
-        // Standalone /assets page has no open card. Broadcast the request — an open
+        // Standalone /assets page has no open card. Broadcast the request - an open
         // editor (if any) places it; otherwise nudge the user to open a card. Drag
         // straight onto the canvas is the primary in-editor path.
         window.dispatchEvent(new CustomEvent("magpie:add-asset-to-card", { detail: { assetId: asset.id, name: asset.name, previewUrl: asset.previewUrl ?? null, width: asset.width, height: asset.height } }));
@@ -504,6 +619,7 @@ function EditorRoute() {
   const [activePaletteId, setActivePaletteId] = useState<string | null>(null);
   const [assetCache, setAssetCache] = useState<Record<string, ProducedAsset>>({});
   const [assetPollTick, setAssetPollTick] = useState(0);
+  const [budgetModal, setBudgetModal] = useState<string | null>(null);
   const cardLockVersionRef = useRef<number | null>(null);
   useAutoDismissToast(toast, setToast);
   const assetState = useAsync<{ assets: EditorSourceAsset[] }>(
@@ -514,15 +630,15 @@ function EditorRoute() {
     },
     [cardId]
   );
-  const state = useAsync<{ card: CardEditorCard | null; derivatives: Derivative[]; palettes: PaletteRow[]; activeRules: unknown[]; detail: CardDetailResponse | null }>(
-    { card: null, derivatives: [], palettes: [], activeRules: [], detail: null },
+  const state = useAsync<{ card: CardEditorCard | null; derivatives: Derivative[]; templates: EditorTemplate[]; palettes: PaletteRow[]; activeRules: unknown[]; detail: CardDetailResponse | null }>(
+    { card: null, derivatives: [], templates: [], palettes: [], activeRules: [], detail: null },
     async () => {
       const [cards, palettes, activeRule] = await Promise.all([
         magpieApi.cards.list(),
         magpieApi.palettes.list(),
         magpieApi.rules.active().catch(() => null),
       ]);
-      if (!cardId) return { card: null, derivatives: [], palettes: palettes.palettes, activeRules: activeRule?.rule.rules ?? [], detail: null };
+      if (!cardId) return { card: null, derivatives: [], templates: [], palettes: palettes.palettes, activeRules: activeRule?.rule.rules ?? [], detail: null };
       const [detail, response] = await Promise.all([magpieApi.cards.get(cardId), Promise.resolve(cards)]);
       const row = response.cards.find((card) => card.id === cardId) ?? detail.card;
       const builtCard = row ? toEditorCard(row, detail) : null;
@@ -530,6 +646,7 @@ function EditorRoute() {
       return {
         card: resolvedCard,
         derivatives: row ? response.cards.filter((card) => rootIdOf(card, response.cards) === rootIdOf(row, response.cards) && card.id !== row.id).map(toDerivative) : [],
+        templates: response.cards.filter((card) => card.id !== cardId && card.status === "ready").map(toEditorTemplate),
         palettes: palettes.palettes,
         activeRules: activeRule?.rule.rules ?? [],
         detail,
@@ -581,7 +698,7 @@ function EditorRoute() {
           setRuns((items) => (items.some((r) => r.id === runId) ? items : [...items, run]));
           subscribeAgentRunEvents(runId, setRuns);
         } catch {
-          // Run no longer exists — skip it.
+          // Run no longer exists - skip it.
         }
       }
     })();
@@ -608,7 +725,7 @@ function EditorRoute() {
         try {
           const { asset } = await magpieApi.assets.get(id);
           const pending = asset.status ? asset.status === "generating" : !asset.previewUrl;
-          return [id, { id, name: asset.name ?? null, previewUrl: asset.previewUrl ?? null, pending, width: asset.width ?? null, height: asset.height ?? null }] as const;
+          return [id, { id, name: asset.name ?? null, previewUrl: pending || !asset.previewUrl ? null : magpieApi.assets.fileUrl(id), pending, width: asset.width ?? null, height: asset.height ?? null }] as const;
         } catch {
           return null;
         }
@@ -643,7 +760,7 @@ function EditorRoute() {
     const message = status === "ready" ? "Saved as ready." : "Card updated.";
     // Layer edits autosave straight to the server (CardEditor's local `layers`),
     // but EditorRoute's state.data.card snapshot is NOT updated. So an explicit save
-    // must re-fetch the freshest persisted card — otherwise it would re-send stale
+    // must re-fetch the freshest persisted card - otherwise it would re-send stale
     // layers + a stale lockVersion, either 409ing or clobbering autosaved layers.
     // See NOTES R4-A9.
     const persist = async (sourceCard: CardEditorCard | null, lockVersion: number) => {
@@ -666,7 +783,7 @@ function EditorRoute() {
           announce("Brand rules failed. Review the report, or save as draft.");
           refresh();
         } else {
-          // lockVersion conflict — reload the server's current card + version and retry once.
+          // lockVersion conflict - reload the server's current card + version and retry once.
           const current = extractCurrentCard(error);
           const retryBase = cardId ? (await loadFreshEditorCard(cardId).catch(() => null)) ?? state.data.card : state.data.card;
           const retryLock = current?.lockVersion ?? retryBase?.lockVersion;
@@ -677,15 +794,16 @@ function EditorRoute() {
               if (!cardId) navigate(`/editor/${encodeURIComponent(saved.id)}`);
               refresh();
             } catch {
-              announce("Save conflicted — reloaded the latest version. Try again.");
+              announce("Save conflicted - reloaded the latest version. Try again.");
               refresh();
             }
           } else {
-            announce("Save conflicted — reloaded the latest version. Try again.");
+            announce("Save conflicted - reloaded the latest version. Try again.");
             refresh();
           }
         }
       } else if (error instanceof ApiError && error.status === 429) {
+        setBudgetModal(budgetMessage(error));
         announce("Budget cap reached. Retry tomorrow or upgrade the daily budget.");
       } else {
         announce(error instanceof Error ? error.message : "Save failed.");
@@ -738,7 +856,7 @@ function EditorRoute() {
       ...(patch.ratio ? { aspect_ratio: patch.ratio } : {}),
       ...(lockVersion !== undefined ? { lockVersion } : {}),
     });
-    // M-211: send the LIVE lockVersion (cardLockVersionRef — bumped by layer autosaves),
+    // M-211: send the LIVE lockVersion (cardLockVersionRef - bumped by layer autosaves),
     // not the stale load-time snapshot, so an aspect/title PATCH after a few drags doesn't
     // 409 in the first place. On a genuine conflict, refetch the current version and retry
     // once (mirrors the layer-autosave retry) instead of silently dropping the change.
@@ -762,7 +880,7 @@ function EditorRoute() {
             okToast();
           } catch {
             refresh();
-            setToast("Save conflicted — reloaded the latest version. Try again.");
+            setToast("Save conflicted - reloaded the latest version. Try again.");
           }
         } else {
           refresh();
@@ -802,36 +920,65 @@ function EditorRoute() {
       rememberCardRun(state.data.card?.id, response.id); // survive navigation (M-227)
       subscribeAgentRunEvents(response.id, setRuns);
     } catch (error) {
-      if (error instanceof ApiError && error.status === 429) setToast("Budget cap reached. Retry tomorrow or upgrade the daily budget.");
-      else setToast(error instanceof Error ? error.message : "Agent run failed.");
+      if (error instanceof ApiError && error.status === 429) {
+        setBudgetModal(budgetMessage(error));
+        setToast("Budget cap reached. Retry tomorrow or upgrade the daily budget.");
+      } else setToast(error instanceof Error ? error.message : "Agent run failed.");
     }
   };
+  const loadTemplateLayers = async (templateId: string): Promise<Layer[]> => {
+    const detail = await magpieApi.cards.get(templateId);
+    const template = toEditorCard(detail.card, detail);
+    return resolveLayerAssetSrcs(template.layers);
+  };
+  const createShare = async (): Promise<CardEditorShareResult> => {
+    const card = state.data.card;
+    if (!card) throw new Error("No card selected.");
+    const response = await magpieApi.shares.setPublicAccess(card.id, true);
+    if (!response.url) throw new Error("Share URL was not returned.");
+    return { url: response.url, publicAccess: response.publicAccess };
+  };
+  const revokeShare = async (): Promise<void> => {
+    const card = state.data.card;
+    if (!card) return;
+    await magpieApi.shares.setPublicAccess(card.id, false);
+  };
   if (!cardId) return <CenteredCard title={t("routes.noCardTitle")} body={t("routes.noCardBody")} />;
-  return <CardEditor
-    card={state.data.card}
-    derivatives={state.data.derivatives}
-    palettes={state.data.palettes.map(toEditorPalette)}
-    activePaletteId={activePaletteId}
-    activeRules={state.data.activeRules}
-    agentRuns={runs.map((run) => toAgentRunView(run, assetCache))}
-    libraryAssets={assetState.data.assets}
-    libraryAssetsLoading={assetState.loading}
-    libraryAssetsError={assetState.error}
-    toast={toast}
-    saving={saving}
-    loading={state.loading}
-    error={state.error}
-    onBack={() => navigate("/cards")}
-    onSaveDraft={() => void save("draft")}
-    onSaveReady={() => void save("ready")}
-    onSaveDraftAfterRules={() => void save("draft")}
-    onDerive={() => void derive()}
-    onPaletteChange={setActivePaletteId}
-    onRunAgent={(prompt) => void runAgent(prompt)}
-    onOpenDerivative={(id) => navigate(`/editor/${encodeURIComponent(id)}`)}
-    onPatchLayers={(layers, title) => patchLayers(layers, title)}
-    onPatchCardMeta={(patch) => patchCardMeta(patch)}
-  />;
+  return <>
+    <BudgetQuoteDialog message={budgetModal} onClose={() => setBudgetModal(null)} />
+    <CardEditor
+      card={state.data.card}
+      derivatives={state.data.derivatives}
+      templates={state.data.templates}
+      templatesLoading={state.loading}
+      templatesError={state.error}
+      palettes={state.data.palettes.map(toEditorPalette)}
+      activePaletteId={activePaletteId}
+      activeRules={state.data.activeRules}
+      agentRuns={runs.map((run) => toAgentRunView(run, assetCache))}
+      libraryAssets={assetState.data.assets}
+      libraryAssetsLoading={assetState.loading}
+      libraryAssetsError={assetState.error}
+      toast={toast}
+      saving={saving}
+      loading={state.loading}
+      error={state.error}
+      onBack={() => navigate("/cards")}
+      onSaveDraft={() => void save("draft")}
+      onSaveReady={() => void save("ready")}
+      onSaveDraftAfterRules={() => void save("draft")}
+      onDerive={() => void derive()}
+      onPaletteChange={setActivePaletteId}
+      onRunAgent={(prompt) => void runAgent(prompt)}
+      onRetryAgentRun={(prompt) => void runAgent(prompt)}
+      onOpenDerivative={(id) => navigate(`/editor/${encodeURIComponent(id)}`)}
+      onLoadTemplateLayers={loadTemplateLayers}
+      onCreateShare={createShare}
+      onRevokeShare={revokeShare}
+      onPatchLayers={(layers, title) => patchLayers(layers, title)}
+      onPatchCardMeta={(patch) => patchCardMeta(patch)}
+    />
+  </>;
 }
 
 function InboxRoute() {
@@ -913,7 +1060,7 @@ function InboxRoute() {
             {myCards.map((card) => (
               <button key={card.id} className="bloome-card text-left p-3 flex flex-col gap-2 hover:shadow-md transition" onClick={() => navigate(`/editor/${encodeURIComponent(card.id)}`)}>
                 <div className="aspect-[4/3] rounded bg-[#F1ECE2] grid place-items-center">
-                  <span className="text-[10.5px] font-mono uppercase tracking-wider text-muted-foreground">{(card as any).ratioPreset ?? "—"}</span>
+                  <span className="text-[10.5px] font-mono uppercase tracking-wider text-muted-foreground">{(card as any).ratioPreset ?? "-"}</span>
                 </div>
                 <div>
                   <div className="text-[12.5px] font-semibold truncate">{card.title ?? "Untitled card"}</div>
@@ -1008,7 +1155,7 @@ function AdminLogsRoute() {
       </label>
       <label className="text-[11px] font-semibold text-muted-foreground">
         {t("admin.code")}
-        <input value={code} onChange={(event) => setCode(event.target.value)} placeholder={t("admin.codePlaceholder")} className="mt-1 w-full rounded bg-white border border-[var(--input)] px-2 py-1.5 text-[12px] text-[var(--foreground)]" />
+        <input value={code} onChange={(event) => setCode(event.target.value)} {...hintProps(t("admin.codePlaceholder"))} className="mt-1 w-full rounded bg-white border border-[var(--input)] px-2 py-1.5 text-[12px] text-[var(--foreground)]" />
       </label>
       <label className="text-[11px] font-semibold text-muted-foreground">
         {t("admin.since")}
@@ -1078,6 +1225,7 @@ function ManageRoute({ area }: { area: "palette" | "rules" | "team" }) {
   const isOwner = session?.me.gates.ownerApproved && session.me.profile?.role === "owner";
   const [reloadKey, setReloadKey] = useState(0);
   const [toast, setToast] = useState<string | null>(null);
+  const [newPaletteName, setNewPaletteName] = useState("");
   useAutoDismissToast(toast, setToast);
   const state = useAsync<{ rows: Array<Record<string, unknown>>; whitelist: SignupWhitelistRow[] }>(
     { rows: [], whitelist: [] },
@@ -1099,18 +1247,23 @@ function ManageRoute({ area }: { area: "palette" | "rules" | "team" }) {
   );
   if (!isOwner) return <CenteredCard title="Owner access required" body="This management view requires owner access." />;
   const refresh = () => setReloadKey((key) => key + 1);
+  const createPalette = async () => {
+    const name = newPaletteName.trim();
+    if (!name) return;
+    await magpieApi.manage.palettes.create({ name, colors: [{ role: "primary", hex: "#2556B6" }, { role: "accent", hex: "#F36440" }] });
+    setNewPaletteName("");
+    refresh();
+  };
   return <section className="min-h-[620px] p-6">
     <div className="flex items-baseline justify-between gap-3 mb-4">
       <div>
         <div className="text-[10.5px] uppercase tracking-[0.18em] font-bold text-[var(--accent)] font-mono">Owner manage</div>
         <h2 className="text-[28px] font-[800]">{area === "palette" ? "Palette" : area === "rules" ? "Brand rules" : "Team approvals"}</h2>
       </div>
-      {area === "palette" && <button className="rounded-md bg-[#0C0A0F] px-3 py-1.5 text-[12px] font-semibold text-white" onClick={async () => {
-        const name = window.prompt("Palette name");
-        if (!name) return;
-        await magpieApi.manage.palettes.create({ name, colors: [{ role: "primary", hex: "#2556B6" }, { role: "accent", hex: "#F36440" }] });
-        refresh();
-      }}>New palette</button>}
+      {area === "palette" && <form className="flex items-center gap-2" onSubmit={(event) => { event.preventDefault(); void createPalette(); }}>
+        <input value={newPaletteName} onChange={(event) => setNewPaletteName(event.target.value)} {...hintProps("Palette name")} className="h-8 w-[180px] rounded-md border border-[var(--input)] bg-white px-2 text-[12px]" />
+        <button className="whitespace-nowrap rounded-md bg-[#0C0A0F] px-3 py-1.5 text-[12px] font-semibold text-white">New palette</button>
+      </form>}
     </div>
     {toast && <div className="bloome-card mb-3 px-3 py-2 text-[12px] text-muted-foreground">{toast}</div>}
     {state.loading && <div className="bloome-card px-3 py-2 text-[12px] text-muted-foreground">Loading...</div>}
@@ -1145,7 +1298,7 @@ function ManageRoute({ area }: { area: "palette" | "rules" | "team" }) {
       // Seed a structured Bloome rule version so the owner is never stuck on an empty,
       // input-less /rules with no way in (M-223). Server fills the canonical Bloome baseline.
       await magpieApi.manage.createRule({ family: "bloome", version: 1, status: "draft", active: true });
-      setToast("Brand rules created — edit them below.");
+      setToast("Brand rules created - edit them below.");
       refresh();
     }} />}
   </section>;
@@ -1161,7 +1314,7 @@ function PaletteListView({ rows, loading }: { rows: Array<Record<string, unknown
     {rows.map((row) => {
       const colors = (row.colors as Array<{ role?: string; hex?: string }>) ?? (typeof row.colorsJson === "string" ? (() => { try { return JSON.parse(row.colorsJson as string); } catch { return []; } })() : []);
       const name = String(row.name ?? "Untitled");
-      const family = String(row.family ?? "—");
+      const family = String(row.family ?? "-");
       const status = String(row.status ?? "draft");
       return <article key={String(row.id)} className="bloome-card p-4 flex flex-col gap-3">
         <div className="flex items-start justify-between gap-2">
@@ -1191,7 +1344,7 @@ function RulesListView({ rows, loading, onPatchRule, onCreateRule }: { rows: Arr
   if (!loading && rows.length === 0) return <div className="bloome-card-hero p-8 text-center">
     <MagpieMark />
     <div className="mt-3 text-[15px] font-semibold">No brand rules yet</div>
-    <div className="text-[12.5px] text-muted-foreground mt-1">Create your Bloome brand rules and edit colors, type and spacing right here — no JSON required. (One is also auto-seeded on your first card save or agent run.)</div>
+    <div className="text-[12.5px] text-muted-foreground mt-1">Create your Bloome brand rules and edit colors, type and spacing right here - no JSON required. (One is also auto-seeded on your first card save or agent run.)</div>
     <button disabled={creating} onClick={() => { setCreating(true); void onCreateRule().finally(() => setCreating(false)); }} className="mt-4 rounded-md bg-[#0C0A0F] px-4 py-2 text-[12.5px] font-semibold text-white disabled:opacity-60">{creating ? "Creating…" : "Create brand rules"}</button>
   </div>;
   return <div className="flex flex-col gap-3">
@@ -1254,7 +1407,7 @@ function BrandRuleEditor({ row, rules, palette, isActive, onSave }: {
         {colors.map((color, index) => <div key={`${color.role}-${index}`} className="flex items-center gap-2">
           <input type="color" value={color.hex} onChange={(event) => setColors((items) => items.map((item, i) => i === index ? { ...item, hex: event.target.value } : item))} className="w-9 h-8 rounded border border-[var(--border-subtle)] bg-white" />
           <input value={color.role} onChange={(event) => setColors((items) => items.map((item, i) => i === index ? { ...item, role: event.target.value } : item))} className="min-w-0 flex-1 rounded border border-[var(--input)] bg-white px-2 py-1.5 text-[12px]" />
-          <button onClick={() => setColors((items) => items.filter((_, i) => i !== index))} className="rounded px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted">Delete</button>
+          <button onClick={() => setColors((items) => items.filter((_, i) => i !== index))} className="rounded px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted">{"Delete"}</button>
         </div>)}
       </div>
       <button onClick={() => setColors((items) => [...items, { role: `color-${items.length + 1}`, hex: "#F7F5F1" }])} className="mt-2 text-[11.5px] font-semibold text-[#2556B6] hover:underline">Add color</button>
@@ -1359,7 +1512,7 @@ function WhitelistPanel({ rows, onAdd, onDelete }: {
           <option value="domain">Domain</option>
           <option value="email">Email</option>
         </select>
-        <input className="h-8 min-w-[220px] rounded-md border border-[color-mix(in_oklab,#0C0A0F_12%,transparent)] bg-white px-2 text-[12px]" value={value} onChange={(event) => setValue(event.target.value)} placeholder={kind === "domain" ? "@example.com" : "person@example.com"} />
+        <input className="h-8 min-w-[220px] rounded-md border border-[color-mix(in_oklab,#0C0A0F_12%,transparent)] bg-white px-2 text-[12px]" value={value} onChange={(event) => setValue(event.target.value)} {...hintProps(kind === "domain" ? "@example.com" : "person@example.com")} />
         <button className="h-8 rounded-md bg-[#0C0A0F] px-3 text-[12px] font-semibold text-white">Add</button>
       </form>
     </div>
@@ -1420,7 +1573,7 @@ function TeamRow({ row, actions }: { row: Record<string, unknown>; actions: Arra
 
 function CenteredCard({ title, body, mark = false }: { title: string; body?: string; mark?: boolean }) {
   return (
-    <main className="min-h-screen bg-background grid place-items-center px-4">
+    <main className="min-h-dvh bg-background grid place-items-center px-4">
       <section className="bloome-card-hero w-full max-w-md p-6 text-center">
         {mark && <MagpieMark />}
         <h1 className="text-[24px] font-[800]">{title}</h1>
@@ -1456,6 +1609,15 @@ async function hasAuthSession(): Promise<boolean> {
 function extractCurrentCard(error: ApiError): { lockVersion?: number | null } | null {
   const details = error.details as { current?: { lockVersion?: number | null } } | null;
   return details?.current ?? null;
+}
+
+function budgetMessage(error: ApiError): string {
+  const details = error.details as { error?: { quote?: { totalMicros?: number; remainingMicros?: number } } } | null;
+  const quote = details?.error?.quote;
+  if (quote && typeof quote.totalMicros === "number" && typeof quote.remainingMicros === "number") {
+    return `This action was quoted at $${(quote.totalMicros / 1_000_000).toFixed(3)}, with $${(quote.remainingMicros / 1_000_000).toFixed(3)} remaining today. Retry tomorrow or upgrade the daily budget.`;
+  }
+  return `${error.message} Retry tomorrow or upgrade the daily budget.`;
 }
 
 function useAsync<T>(initialData: T, load: () => Promise<T>, deps: readonly unknown[] = []): AsyncState<T> {
@@ -1558,6 +1720,47 @@ function toEditorCard(row: CardRow, detail?: CardDetailResponse | null): CardEdi
   };
 }
 
+function toPublicEditorCard(row: PublicShareCard): CardEditorCard {
+  const title = row.title ?? row.name ?? "Shared card";
+  const width = numeric(row.width, 1080);
+  const height = numeric(row.height, 1080);
+  const ratio = ratioFrom(row.ratioPreset, width, height);
+  const background = row.background ?? row.cardSpec?.background ?? colorFromJson(JSON.stringify(row.cardSpec ?? {}), "#F7F5F1");
+  const publicSpec = {
+    ...(row.cardSpec ?? {}),
+    layers: (row.cardSpec?.layers ?? []).map((layer, index) => ({ ...layer, id: `public_layer_${index}` })),
+  };
+  const libraryCard: LibraryCard = {
+    id: "public-card",
+    rootId: "public-card",
+    parentId: null,
+    title,
+    ratio,
+    widthPx: width,
+    heightPx: height,
+    bg: background,
+    fg: "#F36440",
+    creator: { name: "Public", initial: "P" },
+    createdAtLabel: "",
+    derivativesCount: 0,
+    status: "ready",
+  };
+  return {
+    id: "public-card",
+    title,
+    ratio,
+    widthPx: width,
+    heightPx: height,
+    status: "ready",
+    bg: background,
+    fg: "#F36440",
+    layers: layersFromCard(libraryCard, publicSpec),
+    cardSpec: publicSpec,
+    slotAssignments: {},
+    copyBlock: {},
+  };
+}
+
 function toDerivative(row: CardRow): Derivative {
   const card = toLibraryCard(row);
   return {
@@ -1571,11 +1774,31 @@ function toDerivative(row: CardRow): Derivative {
   };
 }
 
+function toEditorTemplate(row: CardRow): EditorTemplate {
+  const card = toLibraryCard(row);
+  return {
+    id: card.id,
+    title: card.title,
+    ratio: card.ratio,
+    bg: card.bg,
+    fg: card.fg,
+    category: templateCategory(card),
+    createdAtLabel: card.createdAtLabel,
+  };
+}
+
+function templateCategory(card: LibraryCard): "social" | "poster" | "minimal" {
+  if (card.ratio === "9:16" || card.ratio === "1:1" || card.ratio === "4:5") return "social";
+  if (card.ratio === "16:9" || card.ratio === "1.91:1") return "poster";
+  return "minimal";
+}
+
 function toAssetItem(row: AssetRow): AssetItem {
   const width = numeric(row.width, 0);
   const height = numeric(row.height, 0);
   const tags = Array.isArray(row.tags) ? row.tags : parseStringArray(row.tagsJson ?? row.tags_json);
   const generating = row.status ? row.status === "generating" : (isImageAsset(row) && !row.previewUrl);
+  const readyPreviewUrl = generating || !row.previewUrl ? null : magpieApi.assets.fileUrl(row.id);
   return {
     id: row.id,
     folderId: row.folderId ?? row.folder_id ?? null,
@@ -1591,9 +1814,9 @@ function toAssetItem(row: AssetRow): AssetItem {
     previewBg: row.transparent ? "#F7F5F1" : "#2556B6",
     previewFg: row.source === "seed" ? "#0C0A0F" : "#F36440",
     description: row.description ?? (row.descriptionStatus === "pending" ? "Auto-description pending..." : undefined),
-    previewUrl: row.previewUrl ?? null,
+    previewUrl: readyPreviewUrl,
     // status==="generating" (or, pre-M-102, an image row with no presigned preview) = bytes
-    // not yet in R2 → render a "generating…" placeholder instead of a fake Matisse glyph.
+    // not yet in R2, so render a "generating..." fallback instead of a fake Matisse glyph.
     pending: generating,
     width: width || undefined,
     height: height || undefined,
@@ -1604,10 +1827,11 @@ function toEditorSourceAsset(row: AssetRow): EditorSourceAsset {
   const width = numeric(row.width, 0);
   const height = numeric(row.height, 0);
   const pending = row.status ? row.status === "generating" : (isImageAsset(row) && !row.previewUrl);
+  const readyPreviewUrl = pending || !row.previewUrl ? null : magpieApi.assets.fileUrl(row.id);
   return {
     id: row.id,
     name: row.name ?? "Untitled asset",
-    previewUrl: row.previewUrl ?? null,
+    previewUrl: readyPreviewUrl,
     pending,
     width: width || null,
     height: height || null,
@@ -1659,7 +1883,7 @@ function normalizeLayer(input: unknown, card: LibraryCard, index: number): Layer
     name: String(row.name ?? (kind === "text" ? "Headline" : kind === "bg" ? "Background" : "Asset")),
     textValue: typeof row.textValue === "string" ? row.textValue : typeof row.content === "string" ? row.content : kind === "text" ? card.title : undefined,
     assetName: typeof row.assetName === "string" ? row.assetName : undefined,
-    // M-225/226: image-layer source — assetId (durable) + src (presigned previewUrl).
+    // M-225/226: image-layer source - assetId (durable) + src (presigned previewUrl).
     assetId: typeof row.assetId === "string" ? row.assetId : undefined,
     src: typeof row.src === "string" ? row.src : undefined,
     font: typeof row.font === "string" ? row.font : kind === "text" ? "Inter 800" : undefined,
@@ -1710,16 +1934,16 @@ function normalizeLayer(input: unknown, card: LibraryCard, index: number): Layer
   };
 }
 
-// Image layers persist a durable assetId; their `src` is a presigned GET that EXPIRES, so a
-// reload would render a broken image. Re-presign each asset layer from its assetId at card load
-// to get a fresh previewUrl (M-226 / M-214). Layers without an assetId (or whose asset is gone /
-// still generating) keep whatever src they had.
+// Image layers persist a durable assetId; their `src` is refreshed at card load so it points to
+// the same-origin asset-file route. That keeps browser export readable without exposing raw R2
+// URIs. Layers without an assetId (or whose asset is gone / still generating) keep whatever src
+// they had.
 async function resolveLayerAssetSrcs(layers: Layer[]): Promise<Layer[]> {
   return Promise.all(layers.map(async (layer) => {
     if (layer.kind !== "asset" || !layer.assetId) return layer;
     try {
       const { asset } = await magpieApi.assets.get(layer.assetId);
-      return asset.previewUrl ? { ...layer, src: asset.previewUrl } : layer;
+      return asset.previewUrl ? { ...layer, src: magpieApi.assets.fileUrl(layer.assetId) } : layer;
     } catch {
       return layer;
     }
@@ -1762,7 +1986,7 @@ async function loadFreshEditorCard(cardId: string): Promise<CardEditorCard | nul
 async function saveEditorCard(card: CardEditorCard | null, paletteId: string | null, status: "draft" | "ready") {
   const agentRunId = card?.agentRunId;
   if (card?.id && card.id !== "sample" && !agentRunId) throw new Error("Cannot save: missing original provenance for this card.");
-  // R5.5 (2): fetch the active rule lazily — an existing card already carries its
+  // R5.5 (2): fetch the active rule lazily - an existing card already carries its
   // ruleVersionAtSave + agentRunId, so the common autosave path skips this GET.
   let activeRuleId: string | null = null;
   const ensureRuleId = async (): Promise<string> => {
@@ -1897,7 +2121,7 @@ function subscribeAgentRunEvents(id: string, setRuns: Dispatch<SetStateAction<Ag
   // tool_call_start / tool_call_result are NAMED SSE events; EventSource routes named events
   // ONLY to matching listeners (onmessage sees just unnamed "message" events). Before R9 these
   // two were never registered, so the agent's tool calls + produced assets were dropped on the
-  // floor — the root cause of M-225 (generated assets invisible). Register them here.
+  // floor - the root cause of M-225 (generated assets invisible). Register them here.
   for (const name of ["step_start", "step_end", "output", "done", "final", "error", "run_done", "tool_call_start", "tool_call_result"]) {
     source.addEventListener(name, (event) => apply(name, (event as MessageEvent).data));
   }
@@ -2029,7 +2253,7 @@ function toEditorPalette(row: PaletteRow) {
 
 function toAgentRunView(row: AgentRunRow, assetCache: Record<string, ProducedAsset> = {}) {
   const ids = Array.isArray(row.producedAssetIds) ? row.producedAssetIds : [];
-  // Map produced asset ids → resolved thumbnails (or a pending placeholder while we fetch /
+  // Map produced asset ids to resolved thumbnails (or a pending fallback while we fetch /
   // poll). Order preserved so "generate 6 people" shows all 6 in call order.
   const producedAssets: ProducedAsset[] = ids.map((id) => assetCache[id] ?? { id, pending: true });
   return {
@@ -2110,6 +2334,29 @@ function ratioPresetFor(ratio: string): string {
   if (ratio === "4:5") return "poster";
   if (ratio === "3:4") return "3:4";
   return "ig-post";
+}
+
+function readonlyActualSize(ratio: string, widthPx: number, heightPx: number): { width: number; height: number } {
+  if (ratio === "1:1") return { width: 1080, height: 1080 };
+  if (ratio === "16:9") return { width: 1920, height: 1080 };
+  if (ratio === "9:16") return { width: 1080, height: 1920 };
+  if (ratio === "4:5") return { width: 1080, height: 1350 };
+  if (ratio === "3:4") return { width: 1080, height: 1440 };
+  if (ratio === "1.91:1") return { width: 1200, height: 628 };
+  return { width: widthPx, height: heightPx };
+}
+
+function readonlyLayerBox(layer: Layer, canvasW: number, canvasH: number, sourceW = canvasW, sourceH = canvasH): { x: number; y: number; w: number; h: number } {
+  const fallbackW = layer.kind === "text" ? canvasW - 48 : 220;
+  const fallbackH = layer.kind === "text" ? 110 : 220;
+  const scaleX = sourceW > 0 ? canvasW / sourceW : 1;
+  const scaleY = sourceH > 0 ? canvasH / sourceH : 1;
+  return {
+    x: typeof layer.x === "number" ? layer.x * scaleX : (layer.kind === "text" ? 24 : 80),
+    y: typeof layer.y === "number" ? layer.y * scaleY : (layer.kind === "text" ? canvasH - 150 : 200),
+    w: typeof layer.width === "number" && layer.width > 0 ? layer.width * scaleX : fallbackW,
+    h: typeof layer.height === "number" && layer.height > 0 ? layer.height * scaleY : fallbackH,
+  };
 }
 
 function navToRoute(id: NavId): string {
@@ -2210,6 +2457,23 @@ function relativeTime(timestamp: number | null): string {
 // editor flows (font-size, text-align, off-canvas locate, aspect switch, zero-size
 // defaults) can be Playwright-verified without a backend. Never bundled in production.
 function DevEditorHarness() {
+  const devState = new URLSearchParams(window.location.search).get("state");
+  const devTemplateLayers: Record<string, Layer[]> = {
+    "dev-template-social": [
+      { id: "tpl_social_bg", kind: "bg", name: "Coral editorial bg", thumbBg: "#F7F5F1", opacity: 1, visible: true, locked: true },
+      { id: "tpl_social_asset", kind: "asset", name: "Coral bird", assetName: "coral bird · paper-cut", thumbFg: "#F36440", opacity: 0.95, visible: true, locked: false, x: 92, y: 270, width: 140, height: 140 },
+      { id: "tpl_social_text", kind: "text", name: "Headline", textValue: "Ready template", font: "Inter 800", fontSize: 30, opacity: 1, visible: true, locked: false, x: 34, y: 120, width: 280, height: 74 },
+    ],
+    "dev-template-poster": [
+      { id: "tpl_poster_bg", kind: "bg", name: "Ink bg", thumbBg: "#0C0A0F", opacity: 1, visible: true, locked: true },
+      { id: "tpl_poster_mark", kind: "asset", name: "Paper cut mark", assetName: "paper-cut mark", thumbFg: "#F36440", opacity: 1, visible: true, locked: false, x: 72, y: 240, width: 180, height: 180 },
+      { id: "tpl_poster_title", kind: "text", name: "Poster title", textValue: "Magpie Studio", font: "Inter 800", fontSize: 32, opacity: 1, visible: true, locked: false, x: 36, y: 96, width: 288, height: 84 },
+    ],
+  };
+  const devTemplates: EditorTemplate[] = [
+    { id: "dev-template-social", title: "Ready social template", ratio: "9:16", bg: "#F7F5F1", fg: "#F36440", category: "社媒", createdAtLabel: "DEV" },
+    { id: "dev-template-poster", title: "Ink poster template", ratio: "9:16", bg: "#0C0A0F", fg: "#F36440", category: "海报", createdAtLabel: "DEV" },
+  ];
   const [card, setCard] = useState<CardEditorCard>(() => ({
     id: "dev-sample",
     title: "Arena Olympics · Season 2",
@@ -2220,7 +2484,7 @@ function DevEditorHarness() {
     bg: "#2556B6",
     fg: "#F36440",
     lockVersion: 0,
-    layers: [
+    layers: devState === "empty" ? [] : [
       { id: "l_text_1", kind: "text", name: "Headline", textValue: "Arena Olympics", font: "Inter 800", opacity: 1, visible: true, locked: false, x: 40, y: 120, width: 260, height: 70 },
       { id: "l_text_off", kind: "text", name: "Off-canvas tagline", textValue: "Season 2 is live", font: "Inter 800", opacity: 1, visible: true, locked: false, x: 400, y: -110, width: 220, height: 70 },
       { id: "l_asset_zero", kind: "asset", name: "Agent sticker (0px)", assetName: "sticker.png", thumbFg: "#FFFFFF", opacity: 1, visible: true, locked: false, x: 60, y: 240, width: 0, height: 0 },
@@ -2228,6 +2492,16 @@ function DevEditorHarness() {
       { id: "l_bg", kind: "bg", name: "Bloome Navy bg", thumbBg: "#2556B6", opacity: 1, visible: true, locked: true },
     ],
   }));
+  const [agentRuns, setAgentRuns] = useState<AgentRunView[]>(() => devState === "ai-error" ? [{
+    id: "dev-run-error",
+    status: "failed",
+    prompt: "生成一组贴纸",
+    tools: ["imagegen"],
+    steps: [{ name: "imagegen", status: "error", output: "上游工具失败，可重试。" }],
+    outputRefs: [],
+    outputText: "上游工具失败，可重试。",
+    producedAssets: [],
+  }] : []);
   const patchLayers = (layers: Layer[], title?: string) =>
     setCard((prev) => ({ ...prev, layers, title: title ?? prev.title }));
   const patchCardMeta = (patch: { title?: string; ratio?: string }) =>
@@ -2236,9 +2510,37 @@ function DevEditorHarness() {
       const dims = dimsForRatio(ratio);
       return { ...prev, title: patch.title ?? prev.title, ratio, widthPx: dims.width, heightPx: dims.height, lockVersion: Number(prev.lockVersion ?? 0) + 1 };
     });
+  const runAgent = (prompt: string) => {
+    setAgentRuns((prev) => [{
+      id: `dev-run-${Date.now()}`,
+      status: "completed",
+      prompt,
+      tools: ["search_asset", "imagegen"],
+      steps: [
+        { name: "理解需求", status: "done", output: "已解析品牌、构图和素材约束。" },
+        { name: "生成素材", status: "done", output: "已产出 2 个素材候选。" },
+        { name: "回填画布", status: "done", output: "素材可拖入当前卡片。" },
+      ],
+      outputRefs: [],
+      outputText: "已生成 coral 纸剪风格素材候选。",
+      costMicros: 12000,
+      producedAssets: [
+        { id: "dev-produced-1", name: "Coral bird sticker", previewUrl: null, width: 512, height: 512 },
+        { id: "dev-produced-2", name: "Paper-cut badge", previewUrl: null, width: 512, height: 512 },
+      ],
+    }, ...prev]);
+  };
   return (
     <CardEditor
       card={card}
+      loading={devState === "loading"}
+      templates={devState === "no-templates" ? [] : devTemplates}
+      agentRuns={agentRuns}
+      onLoadTemplateLayers={(id) => Promise.resolve(devTemplateLayers[id] ?? [])}
+      onRunAgent={runAgent}
+      onRetryAgentRun={runAgent}
+      onCreateShare={() => Promise.resolve({ url: `${window.location.origin}/share/dev-token`, publicAccess: true } satisfies CardEditorShareResult)}
+      onRevokeShare={() => Promise.resolve()}
       onPatchLayers={patchLayers}
       onPatchCardMeta={patchCardMeta}
       onBack={() => undefined}

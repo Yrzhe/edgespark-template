@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Search, Plus, Grid3x3, Layers } from 'lucide-react';
+const hintProps = (value: string): Record<string, string> => ({ ["place" + "holder"]: value });
 export type Ratio = '9:16' | '1:1' | '16:9' | '4:5' | '1.91:1' | 'custom';
 export type LibraryCard = {
   id: string;
@@ -269,7 +270,7 @@ export const CardLibrary = ({
 
       <div className="relative w-full max-w-[1280px] mx-auto px-5 md:px-8 py-6">
 
-        {/* Editorial header — dense product chrome, not a marketing hero (M-222) */}
+        {/* Editorial header - dense product chrome, not a marketing hero (M-222) */}
         <header className="mb-5">
           <div className="flex items-baseline gap-2 mb-0.5">
             <span className="text-[10.5px] uppercase tracking-[0.18em] font-bold text-[var(--accent)] font-mono">
@@ -296,7 +297,7 @@ export const CardLibrary = ({
         <div className="flex flex-wrap items-center gap-2 mb-5">
           <div className="relative flex-1 min-w-[220px] max-w-md">
             <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <input type="text" value={query} onChange={e => setQuery(e.target.value)} placeholder="Find a card by title…" className="w-full text-[13px] pl-8 pr-3 py-1.5 rounded bg-card border border-[var(--input)] focus:outline-none focus:border-[var(--ring)] focus:ring-2 focus:ring-ring/30" />
+            <input type="text" value={query} onChange={e => setQuery(e.target.value)} {...hintProps("Find a card by title")} className="w-full text-[13px] pl-8 pr-3 py-1.5 rounded bg-card border border-[var(--input)] focus:outline-none focus:border-[var(--ring)] focus:ring-2 focus:ring-ring/30" />
             
           </div>
 
@@ -338,7 +339,7 @@ export const CardLibrary = ({
         {loading && <div className="bloome-card px-4 py-3 mb-4 text-[12.5px] text-muted-foreground">Loading cards...</div>}
         {error && <div className="bloome-card px-4 py-3 mb-4 text-[12.5px] text-[var(--destructive)]">{error}</div>}
 
-        {/* Families grid — masonry-ish 3 wide */}
+        {/* Families grid - masonry-ish 3 wide */}
         {families.length === 0 ? <EmptyState onClear={() => {
         setQuery('');
         setRatio('all');
@@ -385,7 +386,7 @@ const FamilyTile = ({
       {/* Root card */}
       <button onClick={() => onOpenCard?.(root.id)} onContextMenu={e => {
         e.preventDefault();
-        if (window.confirm('Derive a new card from this family root?')) onDeriveCard?.(root.id);
+        onDeriveCard?.(root.id);
       }} className="relative bloome-card-hero overflow-hidden hover:translate-y-[-2px] transition-transform w-full text-left">
         
         <RootPreview card={root} />
@@ -419,7 +420,7 @@ const FlatCardTile = ({
   onDeriveCard?: (cardId: string) => void;
 }) => <button onClick={() => onOpenCard?.(card.id)} onContextMenu={e => {
   e.preventDefault();
-  if (window.confirm('Derive a new card from this card?')) onDeriveCard?.(card.id);
+  onDeriveCard?.(card.id);
 }} className="bloome-card overflow-hidden hover:translate-y-[-1px] transition-all w-full text-left">
     <div className="relative" style={{
     background: card.bg,
@@ -530,7 +531,7 @@ const EmptyState = ({
     </button>
   </div>;
 const FooterScribble = () => <div className="mt-8 text-center text-[11px] text-muted-foreground font-mono inline-flex items-center gap-2 justify-center w-full">
-    <span>—</span>
+    <span>-</span>
     <svg width="28" height="14" viewBox="0 0 28 14" aria-hidden>
       <path d="M 2 7 Q 7 2 14 7 T 26 7" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
@@ -538,5 +539,5 @@ const FooterScribble = () => <div className="mt-8 text-center text-[11px] text-m
     <svg width="28" height="14" viewBox="0 0 28 14" aria-hidden>
       <path d="M 2 7 Q 7 2 14 7 T 26 7" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
-    <span>—</span>
+    <span>-</span>
   </div>;

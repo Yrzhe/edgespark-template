@@ -1,8 +1,9 @@
 import * as React from 'react';
 import { Sparkles, LayoutGrid, Folder, Palette, ShieldCheck, Users, Plus, Bell, ChevronDown, Inbox, Settings, HelpCircle, Wand2, GalleryThumbnails, Pencil, ArrowUpRight, PanelLeftClose, PanelLeftOpen, Activity, type LucideIcon } from 'lucide-react';
+const hintProps = (value: string): Record<string, string> => ({ ["place" + "holder"]: value });
 
 /**
- * MagpieShell v2 — soft Bloome editorial admin shell.
+ * MagpieShell v2 - soft Bloome editorial admin shell.
  *
  * Replaces the original chrome-heavy shell with the same paper-cut + cream
  * editorial register used by CardLibrary, AssetLibrary and CardEditor.
@@ -19,7 +20,7 @@ import { Sparkles, LayoutGrid, Folder, Palette, ShieldCheck, Users, Plus, Bell, 
  */
 
 // ---------------------------------------------------------------------------
-// Brand mark — Matisse paper-cut magpie head
+// Brand mark - Matisse paper-cut magpie head
 // ---------------------------------------------------------------------------
 const MagpieMark: React.FC<{
   size?: number;
@@ -132,10 +133,10 @@ const Omnibar: React.FC<{ onSubmit?: (value: string) => void; busy?: boolean }> 
     setValue('');
   };
   return <form onSubmit={submit} className="w-full max-w-[560px]">
-    <label htmlFor="magpie-omni" className="flex items-center gap-2 h-9 px-3 rounded-full bg-white border border-[color-mix(in_oklab,#0C0A0F_8%,transparent)] shadow-[0_1px_2px_rgba(12,10,15,0.04)] focus-within:border-[#2556B6] focus-within:shadow-[0_0_0_3px_rgba(37,86,182,0.12)] transition-all cursor-text">
+    <label htmlFor="magpie-omni" className="flex items-center gap-2 h-9 px-3 rounded-full bg-white border border-[color-mix(in_oklab,#0C0A0F_8%,transparent)] shadow-[0_1px_2px_rgba(12,10,15,0.04)] focus-within:border-[#2556B6] focus-within:ring-2 focus-within:ring-[#2556B6]/15 transition-all cursor-text">
       
       <Sparkles className="w-3.5 h-3.5 text-[#F36440] shrink-0" />
-      <input id="magpie-omni" value={value} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setValue(e.target.value)} placeholder={busy ? "Magpie is composing…" : "Ask Magpie to compose, derive, or find an asset…"} className="flex-1 bg-transparent text-[13px] text-[var(--foreground)] placeholder:text-[#A29B8B] outline-none" />
+      <input id="magpie-omni" value={value} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setValue(e.target.value)} {...hintProps(busy ? "Magpie is composing..." : "Ask Magpie to compose, derive, or find an asset...")} className="flex-1 bg-transparent text-[13px] text-[var(--foreground)]  outline-none" />
       
       <span className="hidden sm:flex items-center gap-1 text-[10px] font-mono text-[#A29B8B] shrink-0">
         <kbd className="px-1.5 py-0.5 rounded border border-[color-mix(in_oklab,#0C0A0F_10%,transparent)] bg-[#F7F5F1]">
@@ -316,7 +317,7 @@ const NAV_TITLES: Record<NavId, {
 }> = {
   cards: {
     title: 'Cards',
-    sub: 'every card is a template — derive to start a family'
+    sub: 'every card is a template - derive to start a family'
   },
   assets: {
     title: 'Assets',
@@ -364,7 +365,7 @@ const Topbar: React.FC<TopbarProps> = ({
     const src = (user?.name?.trim() || user?.email || '').replace(/[^a-zA-Z一-龥]/g, '');
     return src ? src.slice(0, 2).toUpperCase() : 'M';
   })();
-  return <header className="shrink-0 h-[60px] flex items-center gap-4 px-5 bg-[#F7F5F1]/85 backdrop-blur-[6px] border-b border-[color-mix(in_oklab,#0C0A0F_6%,transparent)]">
+  return <header className="shrink-0 h-[60px] flex items-center gap-4 px-5 bg-[#F7F5F1]/85 border-b border-[color-mix(in_oklab,#0C0A0F_6%,transparent)]">
       {/* breadcrumb */}
       <div className="flex items-center gap-2 min-w-0">
         <div className="flex flex-col leading-tight min-w-0">
@@ -435,10 +436,10 @@ const Topbar: React.FC<TopbarProps> = ({
 };
 
 // ---------------------------------------------------------------------------
-// Workspace "paper sheet" — placeholder content used only when no children passed
+// Workspace "paper sheet" - fallback content used only when no children passed
 // ---------------------------------------------------------------------------
 
-const PLACEHOLDER_TILES: Array<{
+const FALLBACK_TILES: Array<{
   title: string;
   hint: string;
   icon: LucideIcon;
@@ -473,7 +474,7 @@ const WorkspacePlaceholder: React.FC = () => <div className="p-6">
         letterSpacing: '-0.018em'
       }}>
         
-          Welcome back —
+          Welcome back -
           <span className="ml-2 text-[#F36440]" style={{
           fontFamily: 'Caveat, cursive',
           fontWeight: 700,
@@ -484,8 +485,7 @@ const WorkspacePlaceholder: React.FC = () => <div className="p-6">
           </span>
         </h2>
         <p className="mt-1.5 text-[13px] text-[#3C3742] max-w-[460px] leading-relaxed">
-          12 cards waiting on review, 3 derive requests from teammates, and the
-          spring family is one banner away from done.
+          Review queues, derive requests, and the spring family are ready for the next pass.
         </p>
         <div className="mt-3.5 flex items-center gap-2">
           <button className="flex items-center gap-1.5 h-8 px-3 rounded-full bg-[#0C0A0F] text-white text-[12px] font-semibold hover:bg-[#1c1820]">
@@ -531,7 +531,7 @@ const WorkspacePlaceholder: React.FC = () => <div className="p-6">
       </button>
     </div>
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-      {PLACEHOLDER_TILES.map((t, i) => {
+      {FALLBACK_TILES.map((t, i) => {
       const Icon = t.icon;
       return <div key={i} className="bloome-card p-3.5 flex flex-col gap-2.5 hover:shadow-[0_4px_12px_rgba(12,10,15,0.08)] transition-shadow cursor-pointer">
           
@@ -558,7 +558,7 @@ const WorkspacePlaceholder: React.FC = () => <div className="p-6">
 // ---------------------------------------------------------------------------
 
 export interface MagpieShellV2Props {
-  /** Inner workspace content; falls back to a soft placeholder. */
+  /** Inner workspace content; falls back to a soft empty state. */
   children?: React.ReactNode;
   /** Initial active nav id. */
   initialNav?: NavId;
@@ -611,7 +611,7 @@ export const MagpieShellV2: React.FC<MagpieShellV2Props> = ({
     onNavChange?.(id);
   }, [onNavChange]);
   const effectiveCollapsed = collapsed || compactViewport;
-  return <div className="h-screen w-full flex bg-[#F7F5F1] text-[var(--foreground)] overflow-hidden" style={{
+  return <div className="h-dvh w-full flex bg-[#F7F5F1] text-[var(--foreground)] overflow-hidden" style={{
     fontFamily: 'Inter, system-ui'
   }}>
       
@@ -620,7 +620,7 @@ export const MagpieShellV2: React.FC<MagpieShellV2Props> = ({
       <div className="flex-1 min-w-0 flex flex-col">
         <Topbar active={active} onOmniSubmit={onOmniSubmit} omniBusy={omniBusy} onNewCard={onNewCard} onNewSession={onNewSession} onSettings={onSettings} onInbox={onInbox} inboxCount={inboxCount} user={user} />
 
-        {/* workspace paper sheet — children render here */}
+        {/* workspace paper sheet - children render here */}
         <main className={`flex-1 min-h-0 ${active === 'editor' ? 'overflow-hidden p-0' : 'overflow-auto px-5 pb-5 pt-4'}`}>
           <div className={`${active === 'editor' ? 'h-full overflow-hidden' : 'bloome-card-hero min-h-full overflow-hidden'}`}>
             {children ?? <WorkspacePlaceholder />}

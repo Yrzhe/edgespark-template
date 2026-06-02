@@ -1,4 +1,4 @@
-// Card export — render the on-canvas composition to PNG / JPG / PDF at the card's
+// Card export - render the on-canvas composition to PNG / JPG / PDF at the card's
 // REAL resolution (card.width × card.height), not the scaled editor preview.
 //
 // Renderer: `html-to-image` (SVG <foreignObject>), NOT html2canvas. The editor's
@@ -26,7 +26,7 @@ export type ExportOptions = {
   title: string;
 };
 
-// Mirror of CardEditor.actualSize — the real card resolution for a ratio. Kept in
+// Mirror of CardEditor.actualSize - the real card resolution for a ratio. Kept in
 // sync deliberately: export must emit real px, never the scaled preview box.
 function actualSize(ratio: string, widthPx: number, heightPx: number): { width: number; height: number } {
   switch (ratio) {
@@ -74,7 +74,7 @@ function triggerDownload(dataUrl: string, filename: string): void {
 }
 
 // Strip the editor's decorative frame (rounded corners + hairline shadow) and, in
-// transparent mode, the card background — so the export is a clean full-bleed
+// transparent mode, the card background - so the export is a clean full-bleed
 // rectangle of the composed card. Applied to the html-to-image clone only.
 function chromeStyle(transparent: boolean, bg: string): Record<string, string> {
   return {
@@ -131,13 +131,13 @@ export async function exportCard(node: HTMLElement, opts: ExportOptions): Promis
   }
 
   if (format === 'jpg') {
-    // JPG has no alpha — paint a white base, then the card's own bg over it.
+    // JPG has no alpha - paint a white base, then the card's own bg over it.
     const dataUrl = await toJpeg(node, { ...common, backgroundColor: '#FFFFFF', quality: 0.95 });
     triggerDownload(dataUrl, filename);
     return;
   }
 
-  // PDF — embed the full-resolution PNG into a single page sized to the bitmap.
+  // PDF - embed the full-resolution PNG into a single page sized to the bitmap.
   const pngDataUrl = await toPng(node, { ...common, backgroundColor: bg });
   const pxW = actual.width * multiplier;
   const pxH = actual.height * multiplier;

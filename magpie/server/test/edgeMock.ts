@@ -100,7 +100,7 @@ export const db = {
 };
 
 type PutCall = { bucket: string; path: string; size: number; contentType?: string };
-type StoredObject = { path: string; size: number; uploadedAt: Date };
+type StoredObject = { path: string; size: number; uploadedAt: Date; body: ArrayBuffer; contentType?: string };
 
 export const storage = {
   // Records every put() so tests can assert bytes were actually persisted.
@@ -111,9 +111,9 @@ export const storage = {
     this._puts = [];
     this._objects = new Map();
   },
-  _seedObject(bucketName: string, path: string, size = 1, uploadedAt = new Date(0)) {
+  _seedObject(bucketName: string, path: string, size = 1, uploadedAt = new Date(0), contentType = "application/octet-stream") {
     if (!this._objects.has(bucketName)) this._objects.set(bucketName, new Map());
-    this._objects.get(bucketName)!.set(path, { path, size, uploadedAt });
+    this._objects.get(bucketName)!.set(path, { path, size, uploadedAt, body: new ArrayBuffer(size), contentType });
   },
   // Mirrors the real client: canonical scheme is `s3://<bucket_name>/<path>`.
   createS3Uri(bucket: any, path: string) {
@@ -143,9 +143,20 @@ export const storage = {
     return {
       put(path: string, body: ArrayBuffer | ArrayBufferView, options?: { contentType?: string }) {
         const size = body instanceof ArrayBuffer ? body.byteLength : (body as ArrayBufferView).byteLength;
+        const copy = body instanceof ArrayBuffer
+          ? body.slice(0)
+          : body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength);
         puts.push({ bucket: bucketName, path, size, contentType: options?.contentType });
-        objMap().set(path, { path, size, uploadedAt: new Date(0) });
+        objMap().set(path, { path, size, uploadedAt: new Date(0), body: copy, contentType: options?.contentType });
         return Promise.resolve();
+      },
+      get(path: string) {
+        const object = objMap().get(path);
+        if (!object) return Promise.resolve(null);
+        return Promise.resolve({
+          body: object.body.slice(0),
+          metadata: { size: object.size, contentType: object.contentType },
+        });
       },
       createPresignedGetUrl(path: string, _expiresInSecs?: number) {
         return Promise.resolve({ downloadUrl: `https://signed.test/${encodeURIComponent(path)}`, expiresAt: new Date(0) });

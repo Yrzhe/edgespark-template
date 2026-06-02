@@ -54,6 +54,17 @@ describe("assets v3", () => {
     expect(body.asset.previewUrl).not.toContain("assets.internal");
   });
 
+  it("GET /assets/:id/file streams ready asset bytes through the same-origin API", async () => {
+    const bytes = new Uint8Array([137, 80, 78, 71]);
+    await storage.from({ bucket_name: "magpie-media" }).put("assets/agent-gen/asset_ready.png", bytes, { contentType: "image/png" });
+    db._seed(assets, [{ id: "asset_ready", name: "Ready", ownerUserId: "owner", status: "ready", s3Uri: "s3://magpie-media/assets/agent-gen/asset_ready.png", contentType: "image/png", byteSize: 4, tagsJson: "[]", lockVersion: 0, createdAt: 1, updatedAt: 1 }]);
+    const app = new Hono().route("/api/public", assetRoutes);
+    const res = await app.request("/api/public/assets/asset_ready/file");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("image/png");
+    expect([...new Uint8Array(await res.arrayBuffer())]).toEqual([...bytes]);
+  });
+
   it("creates folders up to three levels and rejects a fourth", async () => {
     const app = new Hono().route("/api/public", assetRoutes);
     const a = await app.request("/api/public/asset-folders", { method: "POST", body: JSON.stringify({ name: "A" }) });

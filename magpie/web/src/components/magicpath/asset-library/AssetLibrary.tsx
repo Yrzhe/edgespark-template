@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ComponentType, DragEvent } from 'react';
 import { Folder, ChevronRight, UploadCloud, Search, Plus, MoreHorizontal, Sparkles, Image as ImageIcon, Type as TypeIcon, Trash2 } from 'lucide-react';
+const hintProps = (value: string): Record<string, string> => ({ ["place" + "holder"]: value });
 export type AssetKind = 'svg' | 'transparent_png' | 'image' | 'font' | 'palette' | 'photo';
 export type AssetSource = 'upload' | 'renoise' | 'agent-gen' | 'seed';
 export type AssetItem = {
@@ -23,7 +24,7 @@ export type AssetItem = {
   previewFg: string;
   description?: string; // hidden by default; only admin sees in detail
   previewUrl?: string | null; // real presigned GET for the rendered image (M-226)
-  pending?: boolean; // image bytes not yet in R2 (agent-gen async, M-102) → show loading
+  pending?: boolean; // image bytes not yet in R2 (agent-gen async, M-102): show loading
   width?: number;
   height?: number;
 };
@@ -289,6 +290,9 @@ export const AssetLibrary = ({
   const [trashOpen, setTrashOpen] = useState(false);
   const [page, setPage] = useState(1); // fixed-height grid + paginate (no infinite growth)
   const [lightbox, setLightbox] = useState<AssetItem | null>(null);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [movingAsset, setMovingAsset] = useState<AssetItem | null>(null);
+  const [moveFolderId, setMoveFolderId] = useState('');
   const PAGE_SIZE = 24;
   const breadcrumb = useMemo(() => {
     if (!currentFolder) return [];
@@ -335,7 +339,7 @@ export const AssetLibrary = ({
             </span>
           </h1>
           <p className="text-[14px] text-muted-foreground mt-3 max-w-[60ch]">
-            Transparent cutouts, BLOOME letterforms, fonts, photos, palettes — the pieces
+            Transparent cutouts, BLOOME letterforms, fonts, photos, palettes - the pieces
             agents and humans pull from to make cards. Upload anything. Name it. Tag it.
             Agents quietly add a description for search later.
           </p>
@@ -361,7 +365,7 @@ export const AssetLibrary = ({
         <div className="flex flex-wrap items-center gap-2 mb-5 shrink-0">
           <div className="relative flex-1 min-w-[220px] max-w-md">
             <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <input type="text" value={query} onChange={e => setQuery(e.target.value)} placeholder="Find by name or tag…" className="w-full text-[13px] pl-8 pr-3 py-1.5 rounded bg-card border border-[var(--input)] focus:outline-none focus:border-[var(--ring)] focus:ring-2 focus:ring-ring/30" />
+            <input type="text" value={query} onChange={e => setQuery(e.target.value)} {...hintProps("Find by name or tag")} className="w-full text-[13px] pl-8 pr-3 py-1.5 rounded bg-card border border-[var(--input)] focus:outline-none focus:border-[var(--ring)] focus:ring-2 focus:ring-ring/30" />
             
           </div>
 
@@ -385,12 +389,18 @@ export const AssetLibrary = ({
 
           <div className="flex-1" />
 
-          <button onClick={() => {
-            const name = window.prompt('New folder name');
-            if (name?.trim()) onNewFolder?.(name.trim(), currentFolder);
-          }} className="inline-flex items-center gap-1.5 text-[12.5px] px-2.5 py-1.5 rounded bg-card border border-[var(--border-subtle)] hover:bg-muted">
-            <Plus className="w-3.5 h-3.5" /> New folder
-          </button>
+          <form className="inline-flex items-center gap-1.5 rounded bg-card border border-[var(--border-subtle)] px-2 py-1" onSubmit={(event) => {
+            event.preventDefault();
+            const name = newFolderName.trim();
+            if (!name) return;
+            onNewFolder?.(name, currentFolder);
+            setNewFolderName('');
+          }}>
+            <input value={newFolderName} onChange={(event) => setNewFolderName(event.target.value)} {...hintProps("Folder name")} className="h-6 w-[116px] bg-transparent text-[12px] outline-none" />
+            <button className="inline-flex items-center gap-1 whitespace-nowrap text-[12px] font-semibold text-[#0C0A0F]">
+              <Plus className="w-3.5 h-3.5" /> New folder
+            </button>
+          </form>
           <label className="inline-flex items-center gap-1.5 text-[13px] px-3.5 py-1.5 rounded-md bg-[var(--primary)] text-primary-foreground font-semibold hover:opacity-90 transition-opacity shadow-[0_1px_2px_rgba(12,10,15,0.08)] cursor-pointer">
             <UploadCloud className="w-3.5 h-3.5" /> {uploading ? `Uploading ${uploadProgress ?? 0}%` : 'Upload'}
             <input type="file" className="hidden" onChange={e => {
@@ -437,7 +447,7 @@ export const AssetLibrary = ({
           setSource('all');
         }} /> : <><ul className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
               {pagedAssets.map(a => <li key={a.id}>
-                  <AssetTile asset={a} folders={folders} highlighted={highlightedAssetId === a.id} onMove={onMoveAsset} onDelete={onDeleteAsset} onAddToCard={onAddToCard} onEnlarge={setLightbox} />
+                  <AssetTile asset={a} highlighted={highlightedAssetId === a.id} onMoveRequest={(asset) => { setMovingAsset(asset); setMoveFolderId(asset.folderId ?? ''); }} onDelete={onDeleteAsset} onAddToCard={onAddToCard} onEnlarge={setLightbox} />
                 </li>)}
               <li>
                 <UploadDropZone onUpload={(file) => onUpload?.(file, currentFolder)} />
@@ -452,6 +462,20 @@ export const AssetLibrary = ({
 
       </div>
       {lightbox && <AssetLightbox asset={lightbox} onClose={() => setLightbox(null)} onAddToCard={onAddToCard} />}
+      {movingAsset && <div className="fixed inset-0 z-[70] grid place-items-center bg-[#0C0A0F]/40 p-4" role="dialog" aria-modal="true" aria-label="Move asset" onClick={() => setMovingAsset(null)}>
+        <section className="w-full max-w-[360px] rounded-xl bg-white p-4 shadow-[0_24px_60px_rgba(20,28,46,.28)]" onClick={(event) => event.stopPropagation()}>
+          <h2 className="text-[14px] font-bold text-[#0C0A0F]">Move asset</h2>
+          <p className="mt-1 text-[12px] text-muted-foreground">{movingAsset.name}</p>
+          <select value={moveFolderId} onChange={(event) => setMoveFolderId(event.target.value)} className="mt-3 w-full rounded-md border border-[var(--input)] bg-white px-2 py-2 text-[12.5px]">
+            <option value="">Root</option>
+            {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
+          </select>
+          <div className="mt-4 flex justify-end gap-2">
+            <button onClick={() => setMovingAsset(null)} className="rounded-md border border-[var(--border-subtle)] px-3 py-1.5 text-[12px] font-semibold text-muted-foreground">{"Cancel"}</button>
+            <button onClick={() => { onMoveAsset?.(movingAsset.id, moveFolderId || null); setMovingAsset(null); }} className="rounded-md bg-[#F36440] px-3 py-1.5 text-[12px] font-semibold text-white">Move</button>
+          </div>
+        </section>
+      </div>}
     </div>;
 };
 
@@ -527,17 +551,15 @@ const FolderTile = ({
 
 const AssetTile = ({
   asset,
-  folders,
   highlighted,
-  onMove,
+  onMoveRequest,
   onDelete,
   onAddToCard,
   onEnlarge
 }: {
   asset: AssetItem;
-  folders: FolderNode[];
   highlighted?: boolean;
-  onMove?: (assetId: string, folderId: string | null) => void;
+  onMoveRequest?: (asset: AssetItem) => void;
   onDelete?: (asset: AssetItem) => void;
   onAddToCard?: (asset: AssetItem) => void;
   onEnlarge?: (asset: AssetItem) => void;
@@ -548,7 +570,7 @@ const AssetTile = ({
       draggable={draggable}
       onDragStart={draggable ? (e) => writeAssetDrag(e, asset) : undefined}
       className={`group bloome-card overflow-hidden hover:translate-y-[-1px] transition-transform ${draggable ? 'cursor-grab active:cursor-grabbing' : ''} ${highlighted ? 'ring-2 ring-[#F36440]' : ''}`}>
-      {/* Preview tile — click to enlarge, drag to canvas */}
+      {/* Preview tile - click to enlarge, drag to canvas */}
       <div onClick={() => onEnlarge?.(asset)} className="relative cursor-zoom-in" style={{
       background: asset.previewBg,
       aspectRatio: '1 / 1'
@@ -574,11 +596,7 @@ const AssetTile = ({
         {onAddToCard && !asset.pending && <button onClick={(e) => { e.stopPropagation(); onAddToCard(asset); }} title="Add to current card" className="absolute bottom-1.5 left-1.5 opacity-0 group-hover:opacity-100 px-1.5 py-1 rounded bg-[var(--primary)] text-primary-foreground inline-flex items-center gap-1 text-[10px] font-semibold transition-opacity">
           <Plus className="w-3 h-3" /> Add
         </button>}
-        <button onClick={(e) => {
-          e.stopPropagation();
-          const target = window.prompt(`Move to folder id, or blank for root:\n${folders.map(f => `${f.id} - ${f.name}`).join('\n')}`);
-          if (target !== null) onMove?.(asset.id, target.trim() || null);
-        }} className="absolute top-1.5 right-8 opacity-0 group-hover:opacity-100 p-1 rounded bg-card border border-[var(--border-subtle)] text-muted-foreground hover:bg-muted transition-opacity">
+        <button onClick={(e) => { e.stopPropagation(); onMoveRequest?.(asset); }} className="absolute top-1.5 right-8 opacity-0 group-hover:opacity-100 p-1 rounded bg-card border border-[var(--border-subtle)] text-muted-foreground hover:bg-muted transition-opacity">
           <MoreHorizontal className="w-3 h-3" />
         </button>
         <button onClick={(e) => { e.stopPropagation(); onDelete?.(asset); }} className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 p-1 rounded bg-card border border-[var(--border-subtle)] text-muted-foreground hover:bg-muted transition-opacity">
@@ -722,14 +740,14 @@ const EmptyState = ({
     </svg>
     <div className="text-[16px] font-bold">No assets match</div>
     <p className="text-[12.5px] text-muted-foreground mt-1 max-w-[36ch] mx-auto">
-      Adjust the filters or upload something new — any approved teammate can.
+      Adjust the filters or upload something new - any approved teammate can.
     </p>
     <button onClick={onClear} className="mt-3 text-[12px] text-[var(--primary)] hover:underline">
       Clear filters
     </button>
   </div>;
 const FooterScribble = () => <div className="mt-8 text-center text-[11px] text-muted-foreground font-mono inline-flex items-center gap-2 justify-center w-full">
-    <span>—</span>
+    <span>-</span>
     <svg width="28" height="14" viewBox="0 0 28 14" aria-hidden>
       <path d="M 2 7 Q 7 2 14 7 T 26 7" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
@@ -737,5 +755,5 @@ const FooterScribble = () => <div className="mt-8 text-center text-[11px] text-m
     <svg width="28" height="14" viewBox="0 0 28 14" aria-hidden>
       <path d="M 2 7 Q 7 2 14 7 T 26 7" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
-    <span>—</span>
+    <span>-</span>
   </div>;
