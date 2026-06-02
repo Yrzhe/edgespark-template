@@ -24,7 +24,7 @@ export const imagegenBatchRoutes = new Hono<AppEnv>()
 
     try {
       const result = await runBatchImagegen(
-        { userId, prompt: input.prompt, count: input.count, model: input.model, transparent: input.transparent, style, dims: input.dims, folderId: input.folderId },
+        { userId, prompt: input.prompt, count: input.count, model: input.model, transparent: input.transparent, style, dims: input.dims, folderId: input.folderId, referenceAssetIds: input.referenceAssetIds },
         db,
       );
       if (result.generated === 0) return httpError(c, 502, "imagegen_failed", "All image generations failed.");

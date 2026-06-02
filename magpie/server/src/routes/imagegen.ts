@@ -8,6 +8,7 @@ import { httpError } from "../lib/httpErrors";
 import { newId } from "../lib/ids";
 import { isRecord } from "../lib/json";
 import { approvedUserOrAgentKey, type AppEnv } from "../middleware/managementAuth";
+import { parseReferenceAssetIds, ReferenceAssetError, resolveReferenceAssets } from "../lib/imagegen/references";
 
 export const imagegenRoutes = new Hono<AppEnv>()
   .post("/imagegen", approvedUserOrAgentKey, async (c) => {
@@ -17,6 +18,8 @@ export const imagegenRoutes = new Hono<AppEnv>()
     const body = await c.req.json().catch(() => null);
     if (!isRecord(body) || typeof body.prompt !== "string" || !isRecord(body.dims)) return httpError(c, 400, "invalid_request", "prompt and dims are required.");
     try {
+      const referenceAssetIds = parseReferenceAssetIds(body.referenceAssetIds);
+      const referenceAssets = await resolveReferenceAssets(userId, referenceAssetIds, db);
       const result = await imagegenCreate({
         prompt: body.prompt,
         dims: { width: Number(body.dims.width), height: Number(body.dims.height) },
@@ -24,6 +27,7 @@ export const imagegenRoutes = new Hono<AppEnv>()
         activePaletteId: typeof body.activePaletteId === "string" ? body.activePaletteId : null,
         userId,
         quality: body.quality === "medium" ? "medium" : "high",
+        referenceAssets,
       });
       const id = newId("asset");
       const now = Date.now();
@@ -42,13 +46,14 @@ export const imagegenRoutes = new Hono<AppEnv>()
         height: Number(body.dims.height),
         transparent: result.mode === "transparent" ? 1 : 0,
         tagsJson: JSON.stringify(["agent-gen", result.mode] satisfies string[]),
-        provenanceJson: JSON.stringify({ prompt: body.prompt, mode: result.mode satisfies ImagegenMode, paletteId: result.paletteId }),
+        provenanceJson: JSON.stringify({ prompt: body.prompt, mode: result.mode satisfies ImagegenMode, paletteId: result.paletteId, referenceAssetIds: referenceAssetIds ?? [] }),
         createdAt: now,
         updatedAt: now,
       });
       triggerAssetDescription({ assetId: id, s3Uri, userId, agentRunId: null });
       return c.json({ asset_id: id, mode: result.mode, model: result.model, content_type: "image/png", pngBase64: bytesToBase64(result.png) }, 201);
     } catch (error) {
+      if (error instanceof ReferenceAssetError) return httpError(c, error.status, error.code, error.message);
       return imagegenErrorResponse(c, error);
     }
   });

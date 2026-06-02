@@ -12,6 +12,7 @@ import { composeCard } from "../lib/compose";
 import { runToolLoop, type SettledToolCall } from "../lib/agent/loop";
 import type { TurnFn } from "../lib/agent/openai";
 import { AGENT_TOOL_NAMES } from "../lib/agent/tools";
+import { parseReferenceAssetIds, ReferenceAssetError, resolveReferenceAssets } from "../lib/imagegen/references";
 import { evaluateCardRules } from "../lib/rules/engine";
 import { scheduleBackground as scheduleBackgroundTask, withTimeout } from "../lib/background";
 import { reconcileRunRow } from "../lib/reconcile";
@@ -221,12 +222,20 @@ export const agentRunRoutes = new Hono<AppEnv>()
       if (!card || card.deletedAt) return httpError(c, 400, "invalid_card", "cardId must reference an active card.");
       if (card.creatorUserId !== userId && !isOwner) return httpError(c, 403, "forbidden", "You can only run an agent against your own card.");
     }
+    let referenceAssetIds: string[] | null = null;
+    try {
+      referenceAssetIds = parseReferenceAssetIds(body.referenceAssetIds);
+      await resolveReferenceAssets(userId, referenceAssetIds, db);
+    } catch (error) {
+      if (error instanceof ReferenceAssetError) return httpError(c, error.status, error.code, error.message);
+      throw error;
+    }
     const now = Date.now();
     const id = newId("run");
     const plannedParentCardId = plannedParentFromBody(body);
     const plan = isRecord(body.plan) ? body.plan : {};
-    await db.insert(agentRuns).values({ id, userId, sessionId: typeof body.sessionId === "string" ? body.sessionId : null, cardId, plannedParentCardId, provider: "openai", model: "gpt-4.1-mini", state: "running", prompt: body.prompt, planJson: JSON.stringify({ ...plan, streamEvents: [] }), toolsJson: JSON.stringify(AGENT_TOOL_NAMES), outputRefsJson: "[]", costMicros: quote.totalMicros, createdAt: now, startedAt: now });
-    scheduleBackground(streamAgentRunTask({ runId: id, userId, prompt: body.prompt, cardId, isOwner }));
+    await db.insert(agentRuns).values({ id, userId, sessionId: typeof body.sessionId === "string" ? body.sessionId : null, cardId, plannedParentCardId, provider: "openai", model: "gpt-4.1-mini", state: "running", prompt: body.prompt, planJson: JSON.stringify({ ...plan, referenceAssetIds: referenceAssetIds ?? [], streamEvents: [] }), toolsJson: JSON.stringify(AGENT_TOOL_NAMES), outputRefsJson: "[]", costMicros: quote.totalMicros, createdAt: now, startedAt: now });
+    scheduleBackground(streamAgentRunTask({ runId: id, userId, prompt: body.prompt, cardId, isOwner, referenceAssetIds }));
     return c.json({ id, quote, allowedTools: AGENT_TOOL_NAMES }, 202);
   })
   .get("/runs/:id/events", async (c) => streamAgentRunEvents(c))
@@ -310,6 +319,7 @@ export interface AgentRunTaskInput {
   prompt: string;
   cardId?: string | null;
   isOwner?: boolean;
+  referenceAssetIds?: string[] | null;
   // Injectable model turn for tests; production uses the real OpenAI streaming turn.
   turn?: TurnFn;
 }
@@ -347,7 +357,7 @@ export async function runAgentRun(input: AgentRunTaskInput): Promise<void> {
   const loop = await runToolLoop({
     prompt: input.prompt,
     cardId: input.cardId ?? null,
-    ctx: { userId: input.userId, isOwner: input.isOwner === true, runId: input.runId },
+    ctx: { userId: input.userId, isOwner: input.isOwner === true, runId: input.runId, referenceAssetIds: input.referenceAssetIds ?? null },
     turn: input.turn,
     emit: async (event) => {
       if (event.type === "output") return appendRunEvent(input.runId, "output", { stepId: "model", delta: event.delta });

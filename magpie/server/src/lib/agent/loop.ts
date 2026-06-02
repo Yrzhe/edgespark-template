@@ -1,6 +1,6 @@
 import type { ChatMessage, ModelTurn, TurnFn } from "./openai";
 import { openAiTurn } from "./openai";
-import { executeTool, type ToolContext, type ToolResult } from "./tools";
+import { executeTool, prepareToolArgs, type ToolContext, type ToolResult } from "./tools";
 import { withTimeout } from "../background";
 
 export const MAX_ITERATIONS = 5;
@@ -81,8 +81,9 @@ export async function runToolLoop(input: {
 
     for (const call of result.toolCalls) {
       toolCallsMade += 1;
-      await input.emit({ type: "tool_call_start", tool: call.name, args: call.args });
-      const execution = await runToolWithWatchdog(call.name, call.args, toolCtx);
+      const effectiveArgs = prepareToolArgs(call.name, call.args, toolCtx);
+      await input.emit({ type: "tool_call_start", tool: call.name, args: effectiveArgs });
+      const execution = await runToolWithWatchdog(call.name, effectiveArgs, toolCtx);
       await input.emit({ type: "tool_call_result", tool: call.name, resultPreview: execution.resultPreview, success: execution.success });
       settled.push({ tool: call.name, success: execution.success, resultPreview: execution.resultPreview });
       messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(execution.result) });
@@ -120,7 +121,7 @@ function systemPrompt(cardId: string | null): string {
   return [
     "You are Magpie's server-side design agent. You can really call tools to search and generate brand assets and edit the open card — do not just describe what you would do, actually call the tools.",
     cardLine,
-    "Tools: search_asset (find existing images first), describe_asset, generate_asset (single ready image), batch_generate (reserve 1-6 pending image options; pixels materialize when assets are polled), get_brand_rules, get_card_layers, add_layer_to_card.",
+    "Tools: search_asset (find existing images first), describe_asset, generate_asset (single ready image; optional referenceAssetIds for same-style refs), batch_generate (reserve 1-6 pending image options; optional referenceAssetIds shared by each pending image; pixels materialize when assets are polled), get_brand_rules, get_card_layers, add_layer_to_card.",
     "When the user asks for more than one generated image, multiple options, variants, or a count greater than 1, call batch_generate exactly once. Never satisfy that request by calling generate_asset repeatedly.",
     "Prefer reusing an existing asset over generating a new one. After acting, reply with a short confirmation of what you changed. Never claim a tool result you did not get.",
   ].join("\n");

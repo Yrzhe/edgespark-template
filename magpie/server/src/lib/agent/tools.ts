@@ -14,6 +14,7 @@ import {
 } from "../imagegen/batch";
 import { reservePendingBatchAssets } from "../imagegen/materialize";
 import { plannedMediaS3Uri, storeGeneratedPng } from "../imagegen/store";
+import { parseReferenceAssetIds, ReferenceAssetError, resolveReferenceAssets, type ImageReference } from "../imagegen/references";
 
 // R6 agent tool-use surface. Each tool has an OpenAI function-calling schema and a
 // server-side executor. Executors enforce team-scoping / ownership themselves; the agent
@@ -28,6 +29,7 @@ export interface ToolContext {
   isOwner: boolean;
   runId: string | null;
   cardId?: string | null;
+  referenceAssetIds?: string[] | null;
 }
 
 export interface ToolResult {
@@ -79,6 +81,13 @@ export const AGENT_TOOLS = [
         properties: {
           prompt: { type: "string", description: "What to draw. The server prepends the active palette + Bloome DNA automatically." },
           transparent: { type: "boolean", description: "true → transparent cutout PNG; false → opaque full-bleed scene (default false)." },
+          referenceAssetIds: {
+            type: "array",
+            description: "Optional 1-3 ready asset ids from the caller's own library to use as same-style image references. References force the gpt-image-1 edit path.",
+            items: { type: "string" },
+            minItems: 1,
+            maxItems: 3,
+          },
         },
         required: ["prompt"],
       },
@@ -98,6 +107,13 @@ export const AGENT_TOOLS = [
           transparent: { type: "boolean", description: "true -> transparent cutout PNGs; false -> opaque full-bleed images (default false)." },
           cardId: { type: "string", description: "Optional card id for style inheritance. Defaults to the open card for this run when present." },
           model: { type: "string", enum: ["gpt-image-1", "gpt-image-2"], description: "Optional image model override. Defaults from transparent mode." },
+          referenceAssetIds: {
+            type: "array",
+            description: "Optional 1-3 ready asset ids from the caller's own library. Each pending image shares the same references and materializes through gpt-image-1.",
+            items: { type: "string" },
+            minItems: 1,
+            maxItems: 3,
+          },
         },
         required: ["prompt", "count"],
       },
@@ -160,13 +176,25 @@ export const AGENT_TOOLS = [
 
 export const AGENT_TOOL_NAMES = AGENT_TOOLS.map((t) => t.function.name);
 
+export function prepareToolArgs(name: string, args: Record<string, unknown>, ctx: ToolContext): Record<string, unknown> {
+  const forcedRefs = ctx.referenceAssetIds?.length ? ctx.referenceAssetIds : null;
+  if (!forcedRefs || (name !== "generate_asset" && name !== "batch_generate")) return args;
+
+  const next: Record<string, unknown> = { ...args, referenceAssetIds: forcedRefs };
+  // Reference inputs use the gpt-image-1 edit/materialization path. If the model asked for
+  // gpt-image-2 while the user attached references, the server-owned attachment wins.
+  if (name === "batch_generate" && next.model === "gpt-image-2") next.model = "gpt-image-1";
+  return next;
+}
+
 export async function executeTool(name: string, args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
+  const effectiveArgs = prepareToolArgs(name, args, ctx);
   try {
-    const result = await dispatch(name, args, ctx);
+    const result = await dispatch(name, effectiveArgs, ctx);
     void logEvent("info", "agent_tool_call", `agent tool ${name}`, {
       userId: ctx.userId,
       route: "/api/public/agent/runs",
-      meta: { runId: ctx.runId, tool: name, args: summarizeArgs(args), success: result.success },
+      meta: { runId: ctx.runId, tool: name, args: summarizeArgs(effectiveArgs), success: result.success },
     });
     return result;
   } catch (error) {
@@ -174,7 +202,7 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
     void logEvent("warn", "agent_tool_call", `agent tool ${name} failed`, {
       userId: ctx.userId,
       route: "/api/public/agent/runs",
-      meta: { runId: ctx.runId, tool: name, args: summarizeArgs(args), success: false, error: message },
+      meta: { runId: ctx.runId, tool: name, args: summarizeArgs(effectiveArgs), success: false, error: message },
     });
     return { success: false, result: { error: message }, resultPreview: { error: message }, error: message };
   }
@@ -266,6 +294,15 @@ async function generateAsset(args: Record<string, unknown>, ctx: ToolContext): P
   if (!prompt) return fail("prompt is required");
   const mode: ImagegenMode = args.transparent === true ? "transparent" : "opaque";
   const dims = { width: 1024, height: 1024 };
+  let referenceAssetIds: string[] | null = null;
+  let referenceAssets: ImageReference[] = [];
+  try {
+    referenceAssetIds = parseReferenceAssetIds(args.referenceAssetIds);
+    referenceAssets = await resolveReferenceAssets(ctx.userId, referenceAssetIds, db);
+  } catch (error) {
+    if (error instanceof ReferenceAssetError) return fail(error.code);
+    throw error;
+  }
 
   // Pre-call cost guard (read-only). Reject before we create a row or spend any cost.
   const budget = await imagegenCheckBudget(ctx.userId);
@@ -282,6 +319,7 @@ async function generateAsset(args: Record<string, unknown>, ctx: ToolContext): P
     source: "agent-gen",
     folderId: null,
     ownerUserId: ctx.userId,
+    agentRunId: ctx.runId,
     name: deriveAssetName(prompt),
     s3Uri: plannedMediaS3Uri(id),
     contentType: "image/png",
@@ -291,14 +329,14 @@ async function generateAsset(args: Record<string, unknown>, ctx: ToolContext): P
     height: dims.height,
     transparent: mode === "transparent" ? 1 : 0,
     tagsJson: JSON.stringify(["agent-gen", mode]),
-    provenanceJson: JSON.stringify({ prompt, mode, agentRunId: ctx.runId }),
+    provenanceJson: JSON.stringify({ prompt, mode, agentRunId: ctx.runId, referenceAssetIds: referenceAssetIds ?? [] }),
     createdAt: now,
     updatedAt: now,
   });
 
   try {
     // Inline render + R2 put + flip ready — the asset is fully ready before we return.
-    const gen = await imagegenCreate({ prompt, dims, mode, userId: ctx.userId, quality: "medium" });
+    const gen = await imagegenCreate({ prompt, dims, mode, userId: ctx.userId, quality: "medium", referenceAssets });
     const s3Uri = await storeGeneratedPng(id, gen.png);
     await db
       .update(assets)
@@ -307,7 +345,7 @@ async function generateAsset(args: Record<string, unknown>, ctx: ToolContext): P
         s3Uri,
         byteSize: gen.png.byteLength,
         transparent: gen.mode === "transparent" ? 1 : 0,
-        provenanceJson: JSON.stringify({ prompt, mode: gen.mode, paletteId: gen.paletteId, agentRunId: ctx.runId }),
+        provenanceJson: JSON.stringify({ prompt, mode: gen.mode, paletteId: gen.paletteId, agentRunId: ctx.runId, referenceAssetIds: referenceAssetIds ?? [] }),
         updatedAt: Date.now(),
       })
       .where(eq(assets.id, id));
@@ -337,7 +375,16 @@ async function batchGenerate(args: Record<string, unknown>, ctx: ToolContext): P
   if (count > MAX_BATCH_COUNT) return fail(`count must be <= ${MAX_BATCH_COUNT}`);
 
   const transparent = args.transparent === true;
-  const model = parseBatchModel(args.model, transparent);
+  let referenceAssetIds: string[] | null = null;
+  try {
+    referenceAssetIds = parseReferenceAssetIds(args.referenceAssetIds);
+    await resolveReferenceAssets(ctx.userId, referenceAssetIds, db);
+  } catch (error) {
+    if (error instanceof ReferenceAssetError) return fail(error.code);
+    throw error;
+  }
+  if (referenceAssetIds?.length && args.model === "gpt-image-2") return fail("reference_images_require_gpt_image_1");
+  const model = parseBatchModel(args.model, transparent, !!referenceAssetIds?.length);
   const cardId = firstString(args.cardId, ctx.cardId);
   let style = emptyStyle();
   if (cardId) {
@@ -357,6 +404,7 @@ async function batchGenerate(args: Record<string, unknown>, ctx: ToolContext): P
       dims: { width: 1024, height: 1024 },
       folderId: null,
       agentRunId: ctx.runId,
+      referenceAssetIds,
     },
     db,
   );
@@ -468,8 +516,9 @@ function deriveAssetName(prompt: string): string {
   return (trimmed.length > 48 ? trimmed.slice(0, 48) : trimmed) || "Agent generated asset";
 }
 
-function parseBatchModel(value: unknown, transparent: boolean): BatchModel {
+function parseBatchModel(value: unknown, transparent: boolean, hasReferences = false): BatchModel {
   if (value === "gpt-image-1" || value === "gpt-image-2") return value;
+  if (hasReferences) return "gpt-image-1";
   return transparent ? "gpt-image-1" : "gpt-image-2";
 }
 

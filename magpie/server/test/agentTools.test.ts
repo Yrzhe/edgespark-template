@@ -38,6 +38,8 @@ describe("agent tool executors", () => {
   it("registers batch_generate as the seventh agent tool", () => {
     expect(AGENT_TOOL_NAMES).toHaveLength(7);
     expect(AGENT_TOOL_NAMES).toContain("batch_generate");
+    const single = AGENT_TOOLS.find((t) => t.function.name === "generate_asset");
+    expect((single?.function.parameters.properties as any).referenceAssetIds).toMatchObject({ type: "array", maxItems: 3 });
     const tool = AGENT_TOOLS.find((t) => t.function.name === "batch_generate");
     expect(tool?.function.parameters).toMatchObject({
       type: "object",
@@ -47,6 +49,7 @@ describe("agent tool executors", () => {
       },
       required: ["prompt", "count"],
     });
+    expect((tool?.function.parameters.properties as any).referenceAssetIds).toMatchObject({ type: "array", maxItems: 3 });
   });
 
   it("search_asset really queries the DB and ranks by term matches", async () => {
@@ -146,6 +149,45 @@ describe("agent tool executors", () => {
     vars.values.set("DAILY_LLM_BUDGET_USD", "0.02");
   });
 
+  it("generate_asset with referenceAssetIds persists bytes, cost, provenance, and auto-description", async () => {
+    vars.values.set("DAILY_LLM_BUDGET_USD", "5");
+    secret.values.delete("OPENAI_API_KEY");
+    delete process.env.OPENAI_API_KEY;
+    (storage as any)._seedObject("magpie-media", "assets/uploads/ref.png", 6, new Date(0), "image/png");
+    db._seed(assets, [{
+      id: "asset_ref",
+      ownerUserId: "owner",
+      status: "ready",
+      source: "upload",
+      name: "Reference",
+      s3Uri: "s3://magpie-media/assets/uploads/ref.png",
+      contentType: "image/png",
+      byteSize: 6,
+      tagsJson: "[]",
+      createdAt: 1,
+      updatedAt: 1,
+    }]);
+
+    const res = await executeTool("generate_asset", { prompt: "same-style coral leaf", transparent: true, referenceAssetIds: ["asset_ref"] }, OWNER);
+    expect(res.success).toBe(true);
+    const assetId = (res.result as any).assetId;
+    const asset = db._tables.get("assets")!.find((a: any) => a.id === assetId);
+    expect(asset).toMatchObject({ status: "ready", ownerUserId: "owner", source: "agent-gen", agentRunId: OWNER.runId });
+    expect(asset.byteSize).toBeGreaterThan(0);
+    expect(JSON.parse(asset.provenanceJson).referenceAssetIds).toEqual(["asset_ref"]);
+    expect((storage as any)._puts).toHaveLength(1);
+    const imageCosts = (db._tables.get("cost_ledger") ?? []).filter((r: any) => String(r.operation).startsWith("openai.imagegen."));
+    expect(imageCosts).toHaveLength(1);
+
+    await (ctx as any)._drainBackground();
+    const described = db._tables.get("assets")!.find((a: any) => a.id === assetId);
+    expect(described).toMatchObject({ descriptionSource: "llm-auto" });
+    expect(typeof described.description).toBe("string");
+    const visionCosts = (db._tables.get("cost_ledger") ?? []).filter((r: any) => r.operation === "openai.vision.describe.gpt-4o-mini");
+    expect(visionCosts).toHaveLength(1);
+    vars.values.set("DAILY_LLM_BUDGET_USD", "0.02");
+  });
+
   it("generate_asset rejects over-budget BEFORE creating a pending row (pre-call guard)", async () => {
     vars.values.set("DAILY_LLM_BUDGET_USD", "0.0001"); // below the imagegen unit cost
     (storage as any)._resetPuts();
@@ -181,6 +223,37 @@ describe("agent tool executors", () => {
     vars.values.set("DAILY_LLM_BUDGET_USD", "0.02");
   });
 
+  it("batch_generate stores validated referenceAssetIds for lazy materialization", async () => {
+    vars.values.set("DAILY_LLM_BUDGET_USD", "5");
+    secret.values.delete("OPENAI_API_KEY");
+    delete process.env.OPENAI_API_KEY;
+    (storage as any)._seedObject("magpie-media", "assets/uploads/ref.png", 6, new Date(0), "image/png");
+    db._seed(assets, [{
+      id: "asset_ref",
+      ownerUserId: "owner",
+      status: "ready",
+      source: "upload",
+      name: "Reference",
+      s3Uri: "s3://magpie-media/assets/uploads/ref.png",
+      contentType: "image/png",
+      byteSize: 6,
+      tagsJson: "[]",
+      createdAt: 1,
+      updatedAt: 1,
+    }]);
+    const res = await executeTool("batch_generate", { prompt: "two same-style badges", count: 2, transparent: false, referenceAssetIds: ["asset_ref"] }, OWNER);
+    expect(res.success).toBe(true);
+    const rows = (db._tables.get("assets") ?? []).filter((a: any) => a.source === "agent-gen");
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      const provenance = JSON.parse(row.provenanceJson);
+      expect(provenance).toMatchObject({ model: "gpt-image-1", referenceAssetIds: ["asset_ref"], lazyMaterialize: true });
+    }
+    expect((storage as any)._puts).toHaveLength(0);
+    expect((db._tables.get("cost_ledger") ?? [])).toHaveLength(0);
+    vars.values.set("DAILY_LLM_BUDGET_USD", "0.02");
+  });
+
   it("batch_generate rejects count > 6 before creating assets or cost rows", async () => {
     vars.values.set("DAILY_LLM_BUDGET_USD", "5");
     const res = await executeTool("batch_generate", { prompt: "too many", count: 7 }, OWNER);
@@ -205,6 +278,11 @@ describe("agent tool executors", () => {
 
 describe("agent tool loop", () => {
   beforeEach(() => { db._reset(); (ctx as any)._background = []; (storage as any)._resetPuts(); });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    secret.values.delete("OPENAI_API_KEY");
+    vars.values.set("DAILY_LLM_BUDGET_USD", "0.02");
+  });
 
   function scripted(turns: ModelTurn[]): { turn: (m: ChatMessage[], onDelta: (d: string) => Promise<void>) => Promise<ModelTurn>; calls: ChatMessage[][] } {
     const calls: ChatMessage[][] = [];
@@ -221,6 +299,39 @@ describe("agent tool loop", () => {
 
   function toolTurn(name: string, args: Record<string, unknown>): ModelTurn {
     return { text: "", toolCalls: [{ id: `call_${name}`, name, args, rawArguments: JSON.stringify(args) }], finishReason: "tool_calls" };
+  }
+
+  function seedReferenceAssets(): void {
+    (storage as any)._seedObject("magpie-media", "assets/uploads/forced.png", 8, new Date(0), "image/png");
+    (storage as any)._seedObject("magpie-media", "assets/uploads/model-picked.png", 7, new Date(0), "image/png");
+    db._seed(assets, [
+      {
+        id: "asset_forced",
+        ownerUserId: "owner",
+        status: "ready",
+        source: "upload",
+        name: "User attached reference",
+        s3Uri: "s3://magpie-media/assets/uploads/forced.png",
+        contentType: "image/png",
+        byteSize: 8,
+        tagsJson: "[]",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      {
+        id: "asset_model_pick",
+        ownerUserId: "owner",
+        status: "ready",
+        source: "upload",
+        name: "Model searched reference",
+        s3Uri: "s3://magpie-media/assets/uploads/model-picked.png",
+        contentType: "image/png",
+        byteSize: 7,
+        tagsJson: "[]",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ]);
   }
 
   it("executes a tool then streams a final answer, emitting tool_call_start/result", async () => {
@@ -311,6 +422,50 @@ describe("agent tool loop", () => {
     vars.values.set("DAILY_LLM_BUDGET_USD", "0.02");
   });
 
+  it("injects run-attached referenceAssetIds into generate_asset and passes those bytes to the image edit call", async () => {
+    vars.values.set("DAILY_LLM_BUDGET_USD", "5");
+    secret.values.set("OPENAI_API_KEY", "sk-test");
+    seedReferenceAssets();
+    let requestUrl = "";
+    let requestInit: RequestInit | null = null;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+      const urlString = String(url);
+      if (urlString.includes("/v1/images/edits")) {
+        requestUrl = urlString;
+        requestInit = init ?? null;
+        return new Response(JSON.stringify({ data: [{ b64_json: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lv3CJwAAAABJRU5ErkJggg==" }] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ choices: [{ message: { content: "Forced reference result." } }] }), { status: 200 });
+    });
+
+    const events: AgentLoopEvent[] = [];
+    const { turn } = scripted([
+      toolTurn("generate_asset", { prompt: "same-style coral badge", transparent: true, referenceAssetIds: ["asset_model_pick"] }),
+      { text: "Generated the referenced badge.", toolCalls: [], finishReason: "stop" },
+    ]);
+    await runToolLoop({
+      prompt: "make one using the attached reference",
+      ctx: { ...OWNER, referenceAssetIds: ["asset_forced"] },
+      turn,
+      emit: (e) => void events.push(e),
+    });
+
+    const start = events.find((e) => e.type === "tool_call_start" && e.tool === "generate_asset")!;
+    expect(start.args?.referenceAssetIds).toEqual(["asset_forced"]);
+    expect(requestUrl).toBe("https://api.openai.com/v1/images/edits");
+    const form = requestInit?.body as FormData;
+    expect(form.get("model")).toBe("gpt-image-1");
+    expect(form.getAll("image")).toHaveLength(1);
+    const refBlob = form.get("image") as Blob;
+    expect(refBlob.type).toBe("image/png");
+    expect(refBlob.size).toBe(8);
+
+    const generated = (db._tables.get("assets") ?? []).find((a: any) => a.source === "agent-gen");
+    expect(generated).toMatchObject({ status: "ready", ownerUserId: "owner", agentRunId: OWNER.runId });
+    expect(JSON.parse(generated.provenanceJson).referenceAssetIds).toEqual(["asset_forced"]);
+    await (ctx as any)._drainBackground();
+  });
+
   it("runAgentRun harvests batch_generate assetIds into output refs and completes early", async () => {
     vars.values.set("DAILY_LLM_BUDGET_USD", "5");
     secret.values.delete("OPENAI_API_KEY");
@@ -344,6 +499,47 @@ describe("agent tool loop", () => {
     expect((db._tables.get("assets") ?? []).filter((a: any) => a.status === "generating")).toHaveLength(2);
     expect((db._tables.get("cost_ledger") ?? []).filter((r: any) => String(r.operation).startsWith("openai.imagegen.")).length).toBe(0);
     vars.values.set("DAILY_LLM_BUDGET_USD", "0.02");
+  });
+
+  it("runAgentRun forces attached referenceAssetIds into batch_generate instead of a model-chosen substitute", async () => {
+    vars.values.set("DAILY_LLM_BUDGET_USD", "5");
+    secret.values.delete("OPENAI_API_KEY");
+    delete process.env.OPENAI_API_KEY;
+    seedReferenceAssets();
+    db._seed(agentRuns, [{
+      id: "run_forced_refs",
+      userId: "owner",
+      provider: "openai",
+      model: "gpt-4.1-mini",
+      state: "running",
+      prompt: "make one referenced option",
+      planJson: JSON.stringify({ referenceAssetIds: ["asset_forced"], streamEvents: [] }),
+      toolsJson: JSON.stringify(AGENT_TOOL_NAMES),
+      outputRefsJson: "[]",
+      costMicros: 0,
+      createdAt: Date.now(),
+      startedAt: Date.now(),
+    }]);
+    const { turn } = scripted([
+      toolTurn("batch_generate", { prompt: "same style model-picked option", count: 1, transparent: false, model: "gpt-image-2", referenceAssetIds: ["asset_model_pick"] }),
+      { text: "Queued one option.", toolCalls: [], finishReason: "stop" },
+    ]);
+    await runAgentRun({ runId: "run_forced_refs", userId: "owner", prompt: "make one referenced option", referenceAssetIds: ["asset_forced"], turn });
+
+    const run = db._tables.get("agent_runs")!.find((r: any) => r.id === "run_forced_refs");
+    const events = JSON.parse(run.planJson).streamEvents;
+    const toolStart = events.find((e: any) => e.type === "tool_call_start" && e.tool === "batch_generate");
+    expect(toolStart.args.referenceAssetIds).toEqual(["asset_forced"]);
+    expect(toolStart.args.model).toBe("gpt-image-1");
+    const generated = (db._tables.get("assets") ?? []).filter((a: any) => a.source === "agent-gen");
+    expect(generated).toHaveLength(1);
+    const provenance = JSON.parse(generated[0].provenanceJson);
+    expect(provenance.referenceAssetIds).toEqual(["asset_forced"]);
+    expect(provenance.model).toBe("gpt-image-1");
+    expect(provenance.referenceAssetIds).not.toContain("asset_model_pick");
+    const refs = JSON.parse(run.outputRefsJson);
+    expect(refs.filter((r: any) => r.type === "asset")).toHaveLength(1);
+    expect((storage as any)._puts.length).toBe(0);
   });
 
   it("caps tool iterations at MAX_ITERATIONS", async () => {

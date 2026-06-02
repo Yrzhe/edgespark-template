@@ -10,6 +10,7 @@ import { resolveActivePalette } from "../palettes";
 import { triggerAssetDescription } from "../description/autotag";
 import { storeGeneratedPng } from "./store";
 import { buildImagegenPrompt, generateImageOnly, IMAGEGEN_UNIT_MICROS, validateDims, type ImageDims, type ImagegenMode } from "./openai";
+import { parseReferenceAssetIds, ReferenceAssetError, resolveReferenceAssets } from "./references";
 
 export const MAX_BATCH_COUNT = 6;
 export const BATCH_CONCURRENCY_CAP = 3;
@@ -30,6 +31,7 @@ export interface BatchInput {
   cardId: string | null;
   dims: ImageDims | null;
   folderId: string | null;
+  referenceAssetIds: string[] | null;
 }
 
 export type ValidationResult = { ok: true; value: BatchInput } | { ok: false; code: string; message: string };
@@ -53,7 +55,15 @@ export function validateBatchInput(body: unknown): ValidationResult {
     dims = { width: body.dims.width, height: body.dims.height };
   }
   const folderId = typeof body.folderId === "string" && body.folderId.length > 0 ? body.folderId : null;
-  return { ok: true, value: { prompt: body.prompt, count, model, transparent, cardId, dims, folderId } };
+  let referenceAssetIds: string[] | null = null;
+  try {
+    referenceAssetIds = parseReferenceAssetIds(body.referenceAssetIds);
+  } catch (error) {
+    if (error instanceof ReferenceAssetError) return { ok: false, code: error.code, message: error.message };
+    throw error;
+  }
+  if (referenceAssetIds?.length && model === "gpt-image-2") return { ok: false, code: "reference_images_require_gpt_image_1", message: "referenceAssetIds requires model='gpt-image-1'." };
+  return { ok: true, value: { prompt: body.prompt, count, model, transparent, cardId, dims, folderId, referenceAssetIds } };
 }
 
 // Pulls brand style hints (colors / typography / spacing) from a card spec, falling
@@ -113,6 +123,7 @@ export interface RunBatchInput {
   dims?: ImageDims | null;
   folderId?: string | null;
   agentRunId?: string | null;
+  referenceAssetIds?: string[] | null;
 }
 
 export interface BatchResult {
@@ -126,6 +137,8 @@ export async function runBatchImagegen(input: RunBatchInput, database: any = edg
   const mode: ImagegenMode = input.transparent ? "transparent" : "opaque";
   const dims = input.dims ?? defaultDims(mode);
   validateDims(dims);
+  if (input.referenceAssetIds?.length && input.model !== "gpt-image-1") throw new Error("reference_images_require_gpt_image_1");
+  const referenceAssets = await resolveReferenceAssets(input.userId, input.referenceAssetIds, database);
 
   // Batch-level pre-call cost guard: the whole request is denied if the daily budget
   // cannot cover all N images. Only successful generations are charged afterward.
@@ -150,7 +163,7 @@ export async function runBatchImagegen(input: RunBatchInput, database: any = edg
   const indices = Array.from({ length: input.count }, (_, i) => i);
   const pngs = await mapWithConcurrency(indices, BATCH_CONCURRENCY_CAP, async (index) => {
     try {
-      return await generateImageOnly({ prompt: fullPrompt, dims, mode, model: input.model, quality: "high", apiKey });
+      return await generateImageOnly({ prompt: fullPrompt, dims, mode, model: input.model, quality: "high", apiKey, referenceAssets });
     } catch (error) {
       void logEvent("error", "imagegen_batch_item", "Batch image generation failed", { userId: input.userId, meta: { index, error: error instanceof Error ? error.message : String(error) } });
       return null;
@@ -184,7 +197,7 @@ export async function runBatchImagegen(input: RunBatchInput, database: any = edg
       height: dims.height,
       transparent: mode === "transparent" ? 1 : 0,
       tagsJson: JSON.stringify(["agent-gen", "batch", mode]),
-      provenanceJson: JSON.stringify({ prompt: fullPrompt, mode, model: input.model, paletteId: palette.id, batch: true }),
+      provenanceJson: JSON.stringify({ prompt: fullPrompt, mode, model: input.model, paletteId: palette.id, batch: true, ...(input.referenceAssetIds?.length ? { referenceAssetIds: input.referenceAssetIds } : {}) }),
       createdAt: now,
       updatedAt: now,
     });

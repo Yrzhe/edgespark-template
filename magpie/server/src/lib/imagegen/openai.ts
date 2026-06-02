@@ -4,11 +4,13 @@ import { logEvent } from "../events";
 import { httpError } from "../httpErrors";
 import { getDailyBudgetUsd, getOpenAiApiKey, isDevEnv } from "../ownerConfig";
 import { parsePaletteColors, resolveActivePalette } from "../palettes";
+import type { ImageReference } from "./references";
 
 export type ImagegenMode = "transparent" | "opaque";
 export type ImageDims = { width: number; height: number };
 
 const OPENAI_IMAGE_URL = "https://api.openai.com/v1/images/generations";
+const OPENAI_IMAGE_EDIT_URL = "https://api.openai.com/v1/images/edits";
 export const IMAGEGEN_UNIT_MICROS = 80_000;
 const IMAGEGEN_QUOTE: CostQuoteItem = { provider: "openai", operation: "openai.imagegen.gpt-image-2", units: 1, unitMicros: IMAGEGEN_UNIT_MICROS };
 
@@ -21,9 +23,10 @@ export async function imagegenCheckBudget(userId: string) {
   return checkCost(db, userId, [IMAGEGEN_QUOTE], Date.now(), capMicros);
 }
 
-export async function imagegenCreate(input: { prompt: string; dims: ImageDims; mode?: ImagegenMode; activePaletteId?: string | null; userId: string; quality?: "medium" | "high" }) {
+export async function imagegenCreate(input: { prompt: string; dims: ImageDims; mode?: ImagegenMode; activePaletteId?: string | null; userId: string; quality?: "medium" | "high"; referenceAssets?: ImageReference[] }) {
   validateDims(input.dims);
   const mode = input.mode ?? inferMode(input.prompt, input.dims);
+  const referenceAssets = input.referenceAssets ?? [];
   const capMicros = Math.round(getDailyBudgetUsd() * 1_000_000);
   const quote = await checkCost(db, input.userId, [IMAGEGEN_QUOTE], Date.now(), capMicros);
   if (!quote.allowed) {
@@ -36,24 +39,29 @@ export async function imagegenCreate(input: { prompt: string; dims: ImageDims; m
 
   const palette = await resolveActivePalette({ explicitPaletteId: input.activePaletteId }, db);
   const prompt = buildImagegenPrompt(input.prompt, mode, palette);
-  const model = mode === "transparent" ? "gpt-image-1" : "gpt-image-2";
+  const model = referenceAssets.length > 0 ? "gpt-image-1" : mode === "transparent" ? "gpt-image-1" : "gpt-image-2";
   const apiKey = getOpenAiApiKey();
   if (!apiKey) {
     if (!isDevEnv()) throw new Error("openai_api_key_missing");
     await writeCost(db, quote, null);
     return { png: devPngBytes(), mode, prompt, quote, paletteId: palette.id, contentType: "image/png", model };
   }
-  const png = await generateImageOnly({ prompt, dims: input.dims, mode, model, quality: input.quality ?? "high", apiKey });
+  const png = await generateImageOnly({ prompt, dims: input.dims, mode, model, quality: input.quality ?? "high", apiKey, referenceAssets });
   await writeCost(db, quote, null);
   return { png, mode, prompt, quote, paletteId: palette.id, contentType: "image/png", model };
 }
 
 // Pure OpenAI image call with no cost/db side effects. Reused by single + batch imagegen.
 // Returns the dev placeholder PNG when no API key is configured in a dev environment.
-export async function generateImageOnly(input: { prompt: string; dims: ImageDims; mode: ImagegenMode; model: string; quality?: "medium" | "high"; apiKey: string | null }): Promise<Uint8Array> {
+export async function generateImageOnly(input: { prompt: string; dims: ImageDims; mode: ImagegenMode; model: string; quality?: "medium" | "high"; apiKey: string | null; referenceAssets?: ImageReference[] }): Promise<Uint8Array> {
+  const referenceAssets = input.referenceAssets ?? [];
+  if (referenceAssets.length > 0 && input.model !== "gpt-image-1") throw new Error("reference_images_require_gpt_image_1");
   if (!input.apiKey) {
     if (!isDevEnv()) throw new Error("openai_api_key_missing");
     return devPngBytes();
+  }
+  if (referenceAssets.length > 0) {
+    return generateReferencedImageOnly({ ...input, model: "gpt-image-1", referenceAssets, apiKey: input.apiKey });
   }
   const payload = {
     model: input.model,
@@ -72,6 +80,35 @@ export async function generateImageOnly(input: { prompt: string; dims: ImageDims
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
     const message = typeof body?.error?.message === "string" ? body.error.message : "OpenAI image generation failed.";
+    throw new Error(message);
+  }
+  const b64 = body?.data?.[0]?.b64_json;
+  if (typeof b64 !== "string") throw new Error("openai_image_missing");
+  return base64ToBytes(b64);
+}
+
+async function generateReferencedImageOnly(input: { prompt: string; dims: ImageDims; mode: ImagegenMode; model: "gpt-image-1"; quality?: "medium" | "high"; apiKey: string; referenceAssets: ImageReference[] }): Promise<Uint8Array> {
+  const form = new FormData();
+  form.set("model", input.model);
+  form.set("prompt", input.prompt);
+  form.set("size", `${input.dims.width}x${input.dims.height}`);
+  form.set("n", "1");
+  form.set("background", input.mode === "transparent" ? "transparent" : "opaque");
+  form.set("output_format", "png");
+  form.set("quality", input.quality ?? "high");
+  form.set("input_fidelity", "high");
+  const imageField = input.referenceAssets.length > 1 ? "image[]" : "image";
+  for (const ref of input.referenceAssets) {
+    form.append(imageField, new Blob([bytesToArrayBuffer(ref.bytes)], { type: ref.contentType }), ref.filename);
+  }
+  const response = await fetch(OPENAI_IMAGE_EDIT_URL, {
+    method: "POST",
+    headers: { Accept: "application/json", Authorization: `Bearer ${input.apiKey}`, "User-Agent": "magpie-worker-imagegen/3.0" },
+    body: form,
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message = typeof body?.error?.message === "string" ? body.error.message : "OpenAI image edit failed.";
     throw new Error(message);
   }
   const b64 = body?.data?.[0]?.b64_json;
@@ -111,6 +148,10 @@ function base64ToBytes(b64: string): Uint8Array {
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
   return bytes;
+}
+
+function bytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
 function devPngBytes(): Uint8Array {

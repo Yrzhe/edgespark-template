@@ -6,6 +6,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); this project is 
 ## [Unreleased]
 
 ### Added
+- **M-209 — multimodal prompt: attach a reference image → generate same-style (deploy `4a938442`).**
+  Reviewer-verified 🟢 (Thistle), server (Awl) + web (Forge). The AI panel / mobile bottom-sheet
+  lets the user attach 1–3 of their own library assets as style references; the run carries
+  `referenceAssetIds`, and the server **injects them into the `generate_asset`/`batch_generate` tool
+  execution** (`references.ts` + ToolContext) so the model can't substitute a different/searched
+  asset — the reference is forced through gpt-image-1. Produced assets persist to R2 (`/file` 200
+  before+after reload), with cost + llm-auto description rows. **Authz**: referencing an asset not
+  owned by the caller returns `403 reference_asset_forbidden`. Composes with M-200 batch (count≥2)
+  with no double-charge/orphan. Known nit: a mobile single-image run can occasionally not select a
+  producing tool (→ M-239, P3 backlog).
+
 - **Editor polish trio (deploy serving `index-CYPaymrp.js`).** Reviewer-verified 🟢 (Thistle).
   - **M-201 — desktop on-canvas rotate handle.** Brings the mobile rotate handle to desktop
     (≥768px): drag-to-rotate above the selection with snapping; persists `rotation`; the inspector

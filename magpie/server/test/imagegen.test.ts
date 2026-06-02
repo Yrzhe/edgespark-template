@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
-import { costLedger } from "@defs";
-import { db, storage, vars } from "edgespark";
+import { assets, costLedger } from "@defs";
+import { db, secret, storage, vars } from "edgespark";
 import { auth } from "edgespark/http";
 import { buildImagegenPrompt, imagegenCreate, inferMode } from "../src/lib/imagegen/openai";
 import { canonicalPaletteRow } from "../src/lib/palettes";
@@ -41,6 +41,7 @@ describe("imagegen", () => {
 
     afterEach(() => {
       vi.restoreAllMocks();
+      (secret as any).values.delete("OPENAI_API_KEY");
       (vars as any).values.set("DAILY_LLM_BUDGET_USD", "0.02");
       auth.user = undefined;
     });
@@ -62,6 +63,70 @@ describe("imagegen", () => {
       const row = db._tables.get("assets")![0];
       expect(String(row.s3Uri).startsWith("s3://magpie-media/assets/agent-gen/")).toBe(true);
       expect((autotag.triggerAssetDescription as any)).toHaveBeenCalledTimes(1);
+    });
+
+    it("accepts caller-owned referenceAssetIds and passes R2 bytes to the OpenAI edits path", async () => {
+      (secret as any).values.set("OPENAI_API_KEY", "sk-test");
+      (storage as any)._seedObject("magpie-media", "assets/uploads/ref.png", 9, new Date(0), "image/png");
+      db._seed(assets, [{
+        id: "asset_ref",
+        ownerUserId: "owner",
+        status: "ready",
+        source: "upload",
+        name: "Reference",
+        s3Uri: "s3://magpie-media/assets/uploads/ref.png",
+        contentType: "image/png",
+        byteSize: 9,
+        tagsJson: "[]",
+        createdAt: 1,
+        updatedAt: 1,
+      }]);
+      let requestUrl = "";
+      let requestInit: RequestInit | null = null;
+      vi.mocked(globalThis.fetch).mockImplementationOnce(async (url, init) => {
+        requestUrl = String(url);
+        requestInit = init ?? null;
+        return new Response(JSON.stringify({ data: [{ b64_json: PNG_B64 }] }), { status: 200 });
+      });
+
+      const app = new Hono().route("/api/public", imagegenRoutes);
+      const res = await app.request("/api/public/imagegen", {
+        method: "POST",
+        body: JSON.stringify({ prompt: "same style coral badge", dims: { width: 1024, height: 1024 }, mode: "opaque", referenceAssetIds: ["asset_ref"] }),
+      });
+      expect(res.status).toBe(201);
+      expect((await res.json()).model).toBe("gpt-image-1");
+      expect(requestUrl).toBe("https://api.openai.com/v1/images/edits");
+      const form = requestInit?.body as FormData;
+      expect(form.get("model")).toBe("gpt-image-1");
+      expect(form.get("input_fidelity")).toBe("high");
+      expect(form.getAll("image")).toHaveLength(1);
+      const row = db._tables.get("assets")!.find((a: any) => a.id !== "asset_ref");
+      expect(JSON.parse(row.provenanceJson).referenceAssetIds).toEqual(["asset_ref"]);
+      expect((autotag.triggerAssetDescription as any)).toHaveBeenCalledTimes(1);
+    });
+
+    it("rejects a referenceAssetId owned by a different library before calling the model", async () => {
+      db._seed(assets, [{
+        id: "asset_foreign",
+        ownerUserId: "other",
+        status: "ready",
+        s3Uri: "s3://magpie-media/assets/uploads/foreign.png",
+        contentType: "image/png",
+        byteSize: 4,
+        tagsJson: "[]",
+        createdAt: 1,
+        updatedAt: 1,
+      }]);
+      const app = new Hono().route("/api/public", imagegenRoutes);
+      const res = await app.request("/api/public/imagegen", {
+        method: "POST",
+        body: JSON.stringify({ prompt: "copy this style", dims: { width: 1024, height: 1024 }, referenceAssetIds: ["asset_foreign"] }),
+      });
+      expect(res.status).toBe(403);
+      expect((await res.json()).error.code).toBe("reference_asset_forbidden");
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+      expect((storage as any)._puts).toHaveLength(0);
     });
   });
 });

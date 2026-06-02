@@ -220,6 +220,18 @@ export type AgentRunView = {
 };
 export type EditorSourceAsset = { id: string; name?: string | null; previewUrl?: string | null; pending?: boolean; width?: number | null; height?: number | null };
 type ProducedAsset = EditorSourceAsset;
+const REFERENCE_ASSET_LIMIT = 3;
+const isReferenceAssetReady = (asset: EditorSourceAsset) => !!asset.previewUrl && !asset.pending;
+const readyReferenceAssets = (assets: EditorSourceAsset[]) => {
+  const seen = new Set<string>();
+  const ready: EditorSourceAsset[] = [];
+  for (const asset of assets) {
+    if (!isReferenceAssetReady(asset) || seen.has(asset.id)) continue;
+    seen.add(asset.id);
+    ready.push(asset);
+  }
+  return ready;
+};
 export type RuleReport = {
   passed?: boolean;
   pass?: boolean;
@@ -259,8 +271,8 @@ export type CardEditorProps = {
   onSaveDraftAfterRules?: () => void;
   onDerive?: () => void;
   onPaletteChange?: (paletteId: string) => void;
-  onRunAgent?: (prompt: string) => void;
-  onRetryAgentRun?: (prompt: string) => void;
+  onRunAgent?: (prompt: string, referenceAssetIds?: string[]) => void;
+  onRetryAgentRun?: (prompt: string, referenceAssetIds?: string[]) => void;
   onOpenDerivative?: (id: string) => void;
   onLoadTemplateLayers?: (id: string) => Promise<Layer[]>;
   onCreateShare?: () => Promise<CardEditorShareResult>;
@@ -317,6 +329,7 @@ export const CardEditor = ({
   const [layers, setLayers] = useState<Layer[]>(() => card?.layers ?? (import.meta.env.DEV ? LAYERS : []));
   const [agentInput, setAgentInput] = useState('');
   const [agentMode, setAgentMode] = useState<'generate' | 'search' | 'compose'>('generate');
+  const [referenceAssets, setReferenceAssets] = useState<EditorSourceAsset[]>([]);
   const [derivOpen, setDerivOpen] = useState(false);
   const [layerBusy] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
@@ -814,6 +827,20 @@ export const CardEditor = ({
   };
   const selectedLayerObject = layers.find(l => l.id === selectedLayer) ?? null;
   const producedAssets = agentRuns.flatMap((run) => run.producedAssets ?? []);
+  const libraryReferenceAssets = readyReferenceAssets(libraryAssets);
+  const producedReferenceAssets = readyReferenceAssets(producedAssets);
+  const referenceAssetIds = () => referenceAssets.map((asset) => asset.id).slice(0, REFERENCE_ASSET_LIMIT);
+  const attachReferenceAsset = (asset: EditorSourceAsset) => {
+    if (!isReferenceAssetReady(asset)) return;
+    setReferenceAssets((items) => {
+      if (items.some((item) => item.id === asset.id)) return items;
+      if (items.length >= REFERENCE_ASSET_LIMIT) return items;
+      return [...items, asset];
+    });
+  };
+  const removeReferenceAsset = (id: string) => setReferenceAssets((items) => items.filter((asset) => asset.id !== id));
+  const runAgentWithReferences = (prompt: string) => onRunAgent?.(prompt, referenceAssetIds());
+  const retryAgentWithReferences = (prompt: string) => (onRetryAgentRun ?? onRunAgent)?.(prompt, referenceAssetIds());
 
   return <div className="relative w-full h-dvh overflow-hidden bg-[#eef0f3] text-[#1a1d24] font-sans text-[13px] select-none">
       <ExportDialog open={exportOpen} exporting={exporting} onClose={() => setExportOpen(false)} onExport={(req) => void handleExport(req)} />
@@ -858,6 +885,9 @@ export const CardEditor = ({
         templatesError={templatesError}
         applyingTemplateId={applyingTemplateId}
         producedAssets={producedAssets}
+        referenceAssets={referenceAssets}
+        libraryReferenceAssets={libraryReferenceAssets}
+        producedReferenceAssets={producedReferenceAssets}
         agentRuns={agentRuns}
         agentInput={agentInput}
         agentMode={agentMode}
@@ -897,8 +927,10 @@ export const CardEditor = ({
         onOpenAgent={() => { setRightPanel('agent'); setMobileSheet('ai'); }}
         onAgentInputChange={setAgentInput}
         onAgentModeChange={setAgentMode}
-        onRunAgentPrompt={(prompt) => onRunAgent?.(prompt)}
-        onRetryAgentRun={(prompt) => onRetryAgentRun?.(prompt) ?? onRunAgent?.(prompt)}
+        onRunAgentPrompt={runAgentWithReferences}
+        onRetryAgentRun={retryAgentWithReferences}
+        onAttachReferenceAsset={attachReferenceAsset}
+        onRemoveReferenceAsset={removeReferenceAsset}
         onEnterGroup={setEnteredGroupId}
         onMarqueeSelect={setSelectedIds}
         onPatchLayer={patchLayer}
@@ -927,6 +959,9 @@ export const CardEditor = ({
           templatesError={templatesError}
           applyingTemplateId={applyingTemplateId}
           producedAssets={producedAssets}
+          referenceAssets={referenceAssets}
+          libraryReferenceAssets={libraryReferenceAssets}
+          producedReferenceAssets={producedReferenceAssets}
           agentRuns={agentRuns}
           agentInput={agentInput}
           agentMode={agentMode}
@@ -949,8 +984,10 @@ export const CardEditor = ({
           onOpenAgent={() => setRightPanel('agent')}
           onAgentInputChange={setAgentInput}
           onAgentModeChange={setAgentMode}
-          onRunAgentPrompt={(prompt) => onRunAgent?.(prompt)}
-          onRetryAgentRun={(prompt) => onRetryAgentRun?.(prompt) ?? onRunAgent?.(prompt)}
+          onRunAgentPrompt={runAgentWithReferences}
+          onRetryAgentRun={retryAgentWithReferences}
+          onAttachReferenceAsset={attachReferenceAsset}
+          onRemoveReferenceAsset={removeReferenceAsset}
         />
 
         <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -1040,7 +1077,19 @@ export const CardEditor = ({
               </button>)}
             </div>
           </div>
-          {rightPanel === 'agent' ? <AgentPanel input={agentInput} setInput={setAgentInput} runs={agentRuns} onRun={onRunAgent} onRetry={onRetryAgentRun ?? onRunAgent} onOpenAgent={() => setRightPanel('agent')} /> : rightPanel === 'rules' ? <RulesPanel report={activeCard.ruleReport ?? null} rules={activeRules} onSaveDraft={onSaveDraftAfterRules} /> : <InspectorPanel
+          {rightPanel === 'agent' ? <AgentPanel
+            input={agentInput}
+            setInput={setAgentInput}
+            runs={agentRuns}
+            referenceAssets={referenceAssets}
+            libraryReferenceAssets={libraryReferenceAssets}
+            producedReferenceAssets={producedReferenceAssets}
+            onAttachReferenceAsset={attachReferenceAsset}
+            onRemoveReferenceAsset={removeReferenceAsset}
+            onRun={runAgentWithReferences}
+            onRetry={retryAgentWithReferences}
+            onOpenAgent={() => setRightPanel('agent')}
+          /> : rightPanel === 'rules' ? <RulesPanel report={activeCard.ruleReport ?? null} rules={activeRules} onSaveDraft={onSaveDraftAfterRules} /> : <InspectorPanel
             card={activeCard}
             layers={layers}
             selectedIds={selectedIds}
@@ -1088,6 +1137,9 @@ type MobileEditorLayoutProps = {
   templatesError: string | null;
   applyingTemplateId: string | null;
   producedAssets: ProducedAsset[];
+  referenceAssets: EditorSourceAsset[];
+  libraryReferenceAssets: EditorSourceAsset[];
+  producedReferenceAssets: EditorSourceAsset[];
   agentRuns: AgentRunView[];
   agentInput: string;
   agentMode: 'generate' | 'search' | 'compose';
@@ -1129,6 +1181,8 @@ type MobileEditorLayoutProps = {
   onAgentModeChange: (value: 'generate' | 'search' | 'compose') => void;
   onRunAgentPrompt?: (prompt: string) => void;
   onRetryAgentRun?: (prompt: string) => void;
+  onAttachReferenceAsset: (asset: EditorSourceAsset) => void;
+  onRemoveReferenceAsset: (id: string) => void;
   onEnterGroup: (gid: string | null) => void;
   onMarqueeSelect: (ids: string[]) => void;
   onPatchLayer: (id: string, patch: Partial<Layer>, title?: string) => void;
@@ -1163,6 +1217,9 @@ const MobileEditorLayout = ({
   templatesError,
   applyingTemplateId,
   producedAssets,
+  referenceAssets,
+  libraryReferenceAssets,
+  producedReferenceAssets,
   agentRuns,
   agentInput,
   agentMode,
@@ -1204,6 +1261,8 @@ const MobileEditorLayout = ({
   onAgentModeChange,
   onRunAgentPrompt,
   onRetryAgentRun,
+  onAttachReferenceAsset,
+  onRemoveReferenceAsset,
   onEnterGroup,
   onMarqueeSelect,
   onPatchLayer,
@@ -1292,6 +1351,9 @@ const MobileEditorLayout = ({
         templatesError={templatesError}
         applyingTemplateId={applyingTemplateId}
         producedAssets={producedAssets}
+        referenceAssets={referenceAssets}
+        libraryReferenceAssets={libraryReferenceAssets}
+        producedReferenceAssets={producedReferenceAssets}
         agentRuns={agentRuns}
         agentInput={agentInput}
         agentMode={agentMode}
@@ -1316,6 +1378,8 @@ const MobileEditorLayout = ({
         onAgentModeChange={onAgentModeChange}
         onRunAgentPrompt={onRunAgentPrompt}
         onRetryAgentRun={onRetryAgentRun}
+        onAttachReferenceAsset={onAttachReferenceAsset}
+        onRemoveReferenceAsset={onRemoveReferenceAsset}
       />}
     </MobileBottomSheet>
 
@@ -1626,6 +1690,9 @@ const SourcePanelContent = ({
   templatesError,
   applyingTemplateId,
   producedAssets,
+  referenceAssets,
+  libraryReferenceAssets,
+  producedReferenceAssets,
   agentRuns,
   agentInput,
   agentMode,
@@ -1650,6 +1717,8 @@ const SourcePanelContent = ({
   onAgentModeChange,
   onRunAgentPrompt,
   onRetryAgentRun,
+  onAttachReferenceAsset,
+  onRemoveReferenceAsset,
 }: {
   mobile?: boolean;
   source: SourcePanel;
@@ -1669,6 +1738,9 @@ const SourcePanelContent = ({
   templatesError: string | null;
   applyingTemplateId: string | null;
   producedAssets: ProducedAsset[];
+  referenceAssets: EditorSourceAsset[];
+  libraryReferenceAssets: EditorSourceAsset[];
+  producedReferenceAssets: EditorSourceAsset[];
   agentRuns: AgentRunView[];
   agentInput: string;
   agentMode: 'generate' | 'search' | 'compose';
@@ -1693,6 +1765,8 @@ const SourcePanelContent = ({
   onAgentModeChange: (value: 'generate' | 'search' | 'compose') => void;
   onRunAgentPrompt?: (prompt: string) => void;
   onRetryAgentRun?: (prompt: string) => void;
+  onAttachReferenceAsset: (asset: EditorSourceAsset) => void;
+  onRemoveReferenceAsset: (id: string) => void;
 }) => {
   const { t } = useTranslation();
   const shellClass = mobile
@@ -1753,10 +1827,15 @@ const SourcePanelContent = ({
       mode={agentMode}
       runs={agentRuns}
       assets={producedAssets}
+      referenceAssets={referenceAssets}
+      libraryReferenceAssets={libraryReferenceAssets}
+      producedReferenceAssets={producedReferenceAssets}
       onInputChange={onAgentInputChange}
       onModeChange={onAgentModeChange}
       onRun={onRunAgentPrompt}
       onRetry={onRetryAgentRun}
+      onAttachReferenceAsset={onAttachReferenceAsset}
+      onRemoveReferenceAsset={onRemoveReferenceAsset}
       onOpenAgent={onOpenAgent}
     />}
   </aside>;
@@ -1791,7 +1870,7 @@ const AssetsSourcePanel = ({ assets, loading, error, onOpenAgent }: { assets: Ed
   </>;
 };
 
-const ProducedAssetSourceTile = ({ asset }: { asset: ProducedAsset }) => {
+const ProducedAssetSourceTile = ({ asset, onAttachReference, referenceSelected = false }: { asset: ProducedAsset; onAttachReference?: (asset: EditorSourceAsset) => void; referenceSelected?: boolean }) => {
   const ready = !!asset.previewUrl && !asset.pending;
   const { t } = useTranslation();
   return <div
@@ -1802,6 +1881,16 @@ const ProducedAssetSourceTile = ({ asset }: { asset: ProducedAsset }) => {
     title={asset.name ?? asset.id}
   >
     {ready ? <img src={asset.previewUrl ?? undefined} alt={asset.name ?? ''} draggable={false} loading="lazy" className="absolute inset-0 h-full w-full object-contain" onError={(e) => { (e.currentTarget as HTMLImageElement).style.opacity = '0'; }} /> : <div className="absolute inset-0 grid place-items-center text-[10px] text-[#7a8194]"><Loader2 className="mb-1 h-3.5 w-3.5 animate-spin" />{t('editor.sourcePanels.assets.generating')}</div>}
+    {ready && onAttachReference && <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); if (!referenceSelected) onAttachReference(asset); }}
+      disabled={referenceSelected}
+      title={referenceSelected ? t('editor.reference.selected') : t('editor.reference.attach')}
+      aria-label={referenceSelected ? t('editor.reference.selected') : t('editor.reference.attach')}
+      className={`absolute right-1 top-1 grid h-7 w-7 place-items-center rounded-md border bg-white/95 shadow-sm ${referenceSelected ? 'border-[#F36440] text-[#F36440]' : 'border-[#e4e7ec] text-[#42485a] hover:border-[#f3b39c] hover:text-[#d9532b]'}`}
+    >
+      {referenceSelected ? <CheckCircle2 className="h-3.5 w-3.5" /> : <FileImage className="h-3.5 w-3.5" />}
+    </button>}
     {ready && <button onClick={(e) => { e.stopPropagation(); window.dispatchEvent(new CustomEvent('magpie:add-asset-to-card', { detail: { assetId: asset.id, name: asset.name, previewUrl: asset.previewUrl, width: asset.width, height: asset.height } })); }} className="absolute inset-x-1 bottom-1 inline-flex min-h-7 items-center justify-center gap-1 whitespace-nowrap rounded-md bg-[#F36440] px-2 py-1 text-[10px] font-semibold text-white shadow-sm transition-colors hover:bg-[#d9532b]">
       <Plus className="h-3 w-3 shrink-0" /> {t('editor.sourcePanels.assets.add')}
     </button>}
@@ -1900,20 +1989,30 @@ const AISourcePanel = ({
   mode,
   runs,
   assets,
+  referenceAssets,
+  libraryReferenceAssets,
+  producedReferenceAssets,
   onInputChange,
   onModeChange,
   onRun,
   onRetry,
+  onAttachReferenceAsset,
+  onRemoveReferenceAsset,
   onOpenAgent,
 }: {
   input: string;
   mode: 'generate' | 'search' | 'compose';
   runs: AgentRunView[];
   assets: ProducedAsset[];
+  referenceAssets: EditorSourceAsset[];
+  libraryReferenceAssets: EditorSourceAsset[];
+  producedReferenceAssets: EditorSourceAsset[];
   onInputChange: (value: string) => void;
   onModeChange: (value: 'generate' | 'search' | 'compose') => void;
   onRun?: (prompt: string) => void;
   onRetry?: (prompt: string) => void;
+  onAttachReferenceAsset: (asset: EditorSourceAsset) => void;
+  onRemoveReferenceAsset: (id: string) => void;
   onOpenAgent: () => void;
 }) => {
   const { t } = useTranslation();
@@ -1938,6 +2037,13 @@ const AISourcePanel = ({
       <form onSubmit={submit} className="border-b border-[#eef0f3] px-3 pb-3 pt-3">
         <div className="rounded-xl border border-[#e4e7ec] p-2.5">
           <textarea value={input} onChange={(event) => onInputChange(event.target.value)} rows={3} {...hintProps(t('editor.sourcePanels.ai.prompt'))} className="w-full resize-none bg-transparent text-[12.5px] leading-snug outline-none " />
+          <ReferenceAttachControl
+            selectedAssets={referenceAssets}
+            libraryAssets={libraryReferenceAssets}
+            producedAssets={producedReferenceAssets}
+            onAttach={onAttachReferenceAsset}
+            onRemove={onRemoveReferenceAsset}
+          />
           <div className="mt-2 flex items-center gap-1.5">
             {(['generate', 'search', 'compose'] as const).map((item) => <button key={item} type="button" onClick={() => onModeChange(item)} className={`shrink-0 whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] ${mode === item ? 'bg-[#F36440] text-white' : 'bg-[#f3f4f6] text-[#42485a] hover:bg-[#eef0f3]'}`}>
               {modeLabels[item]}
@@ -1970,7 +2076,7 @@ const AISourcePanel = ({
         {outputAssets.length > 0 && <div>
           <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[#7a8194]">{t('editor.sourcePanels.ai.outputs', { count: outputAssets.length })}</div>
           <div className="grid grid-cols-2 gap-2.5">
-            {outputAssets.slice(0, 6).map((asset) => <ProducedAssetSourceTile key={asset.id} asset={asset} />)}
+            {outputAssets.slice(0, 6).map((asset) => <ProducedAssetSourceTile key={asset.id} asset={asset} onAttachReference={onAttachReferenceAsset} referenceSelected={referenceAssets.some((item) => item.id === asset.id)} />)}
           </div>
         </div>}
         <button onClick={onOpenAgent} className="inline-flex min-h-9 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-[#e4e7ec] bg-white px-3 py-2 text-[12px] font-semibold text-[#42485a] hover:bg-[#f6f7f9]">
@@ -3174,10 +3280,144 @@ const CanvasRuler = ({
 
 /* ─────────────────────────── Right: Agent panel ─────────────────────────── */
 
+const ReferenceAttachControl = ({
+  selectedAssets,
+  libraryAssets,
+  producedAssets,
+  onAttach,
+  onRemove,
+}: {
+  selectedAssets: EditorSourceAsset[];
+  libraryAssets: EditorSourceAsset[];
+  producedAssets: EditorSourceAsset[];
+  onAttach: (asset: EditorSourceAsset) => void;
+  onRemove: (id: string) => void;
+}) => {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const selectedIds = new Set(selectedAssets.map((asset) => asset.id));
+  const full = selectedAssets.length >= REFERENCE_ASSET_LIMIT;
+  const empty = libraryAssets.length === 0 && producedAssets.length === 0;
+  return <div data-m209-reference-attach="true" className="mt-2 rounded-lg border border-[#f3d2c5] bg-[#fff8f5] px-2.5 py-2">
+    <div className="flex items-center gap-2">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className="inline-flex min-h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-[#f3b39c] bg-white px-2 py-1 text-[11.5px] font-semibold text-[#d9532b] hover:bg-[#fdeee9]"
+        aria-expanded={open}
+      >
+        <FileImage className="h-3.5 w-3.5 shrink-0" />
+        <span className="whitespace-nowrap">{t('editor.reference.label')}</span>
+        <span className="rounded bg-[#fdeee9] px-1.5 py-0.5 font-mono text-[10px] text-[#BC4E32]">{t('editor.reference.count', { count: selectedAssets.length, max: REFERENCE_ASSET_LIMIT })}</span>
+      </button>
+      <div className="min-w-0 flex-1 truncate text-[10.5px] leading-snug text-[#7a8194]">
+        {full ? t('editor.reference.full') : selectedAssets.length > 0 ? t('editor.reference.normalHint') : t('editor.reference.emptyHint')}
+      </div>
+    </div>
+    {selectedAssets.length > 0 && <div className="mt-2 flex gap-1.5 overflow-x-auto pb-0.5">
+      {selectedAssets.map((asset) => <div key={asset.id} className="relative h-11 w-11 shrink-0 overflow-hidden rounded-md border border-[#f3b39c] bg-[#f7f5f1]">
+        {asset.previewUrl && <img src={asset.previewUrl} alt={asset.name ?? ''} className="absolute inset-0 h-full w-full object-contain" draggable={false} loading="lazy" />}
+        <button
+          type="button"
+          onClick={() => onRemove(asset.id)}
+          aria-label={t('editor.reference.remove')}
+          title={t('editor.reference.remove')}
+          className="absolute right-0.5 top-0.5 grid h-[18px] w-[18px] place-items-center rounded-full bg-[#0C0A0F]/70 text-white"
+        >
+          <X className="h-3 w-3" />
+        </button>
+      </div>)}
+    </div>}
+    {open && <div className="mt-2 space-y-2 rounded-lg border border-[#e4e7ec] bg-white p-2 shadow-[0_8px_20px_rgba(20,28,46,0.08)]">
+      {empty ? <div className="rounded-md border border-dashed border-[#e4e7ec] px-2.5 py-3 text-[11.5px] leading-relaxed text-[#7a8194]">
+        {t('editor.reference.emptyPicker')}
+      </div> : <>
+        <ReferenceOptionSection
+          title={t('editor.reference.library')}
+          emptyLabel={t('editor.reference.noLibrary')}
+          assets={libraryAssets}
+          selectedIds={selectedIds}
+          full={full}
+          onAttach={onAttach}
+        />
+        <ReferenceOptionSection
+          title={t('editor.reference.produced')}
+          emptyLabel={t('editor.reference.noProduced')}
+          assets={producedAssets}
+          selectedIds={selectedIds}
+          full={full}
+          onAttach={onAttach}
+        />
+      </>}
+    </div>}
+  </div>;
+};
+
+const ReferenceOptionSection = ({
+  title,
+  emptyLabel,
+  assets,
+  selectedIds,
+  full,
+  onAttach,
+}: {
+  title: string;
+  emptyLabel: string;
+  assets: EditorSourceAsset[];
+  selectedIds: Set<string>;
+  full: boolean;
+  onAttach: (asset: EditorSourceAsset) => void;
+}) => <section>
+  <div className="mb-1.5 flex items-center justify-between gap-2">
+    <div className="shrink-0 whitespace-nowrap text-[10px] font-bold uppercase tracking-wider text-[#7a8194]">{title}</div>
+    <div className="shrink-0 font-mono text-[10px] text-[#9aa1b1]">{assets.length}</div>
+  </div>
+  {assets.length === 0 ? <div className="rounded-md bg-[#f6f7f9] px-2 py-2 text-[11px] text-[#7a8194]">{emptyLabel}</div> : <div className="grid grid-cols-4 gap-1.5">
+    {assets.slice(0, 12).map((asset) => <ReferenceOptionTile
+      key={asset.id}
+      asset={asset}
+      selected={selectedIds.has(asset.id)}
+      disabled={full && !selectedIds.has(asset.id)}
+      onAttach={onAttach}
+    />)}
+  </div>}
+</section>;
+
+const ReferenceOptionTile = ({
+  asset,
+  selected,
+  disabled,
+  onAttach,
+}: {
+  asset: EditorSourceAsset;
+  selected: boolean;
+  disabled: boolean;
+  onAttach: (asset: EditorSourceAsset) => void;
+}) => {
+  const { t } = useTranslation();
+  return <button
+    type="button"
+    onClick={() => !selected && !disabled && onAttach(asset)}
+    disabled={selected || disabled}
+    title={selected ? t('editor.reference.selected') : asset.name ?? asset.id}
+    className={`relative aspect-square overflow-hidden rounded-md border bg-[#f7f5f1] ${selected ? 'border-[#F36440] ring-2 ring-[#F36440]/30' : disabled ? 'border-[#e4e7ec] opacity-45' : 'border-[#e4e7ec] hover:border-[#f3b39c]'}`}
+  >
+    {asset.previewUrl && <img src={asset.previewUrl} alt={asset.name ?? ''} className="absolute inset-0 h-full w-full object-contain" draggable={false} loading="lazy" />}
+    {selected && <span className="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-[#F36440] text-white">
+      <CheckCircle2 className="h-3.5 w-3.5" />
+    </span>}
+  </button>;
+};
+
 const AgentPanel = ({
   input,
   setInput,
   runs,
+  referenceAssets,
+  libraryReferenceAssets,
+  producedReferenceAssets,
+  onAttachReferenceAsset,
+  onRemoveReferenceAsset,
   onRun,
   onRetry,
   onOpenAgent,
@@ -3186,6 +3426,11 @@ const AgentPanel = ({
   input: string;
   setInput: (v: string) => void;
   runs: AgentRunView[];
+  referenceAssets: EditorSourceAsset[];
+  libraryReferenceAssets: EditorSourceAsset[];
+  producedReferenceAssets: EditorSourceAsset[];
+  onAttachReferenceAsset: (asset: EditorSourceAsset) => void;
+  onRemoveReferenceAsset: (id: string) => void;
   onRun?: (prompt: string) => void;
   onRetry?: (prompt: string) => void;
   onOpenAgent: () => void;
@@ -3221,6 +3466,14 @@ const AgentPanel = ({
       </button>
     </form>
 
+    <ReferenceAttachControl
+      selectedAssets={referenceAssets}
+      libraryAssets={libraryReferenceAssets}
+      producedAssets={producedReferenceAssets}
+      onAttach={onAttachReferenceAsset}
+      onRemove={onRemoveReferenceAsset}
+    />
+
     {/* Active plan or empty state */}
     {latestFailed ? <AIErrorCard run={latest} onRetry={() => onRetry?.(latest.prompt)} onOpenAgent={onOpenAgent} /> : latest ? <div className="bloome-card overflow-hidden">
       <div className="px-3 py-1.5 flex items-baseline justify-between">
@@ -3237,7 +3490,7 @@ const AgentPanel = ({
           <span className="text-[10px] font-mono text-muted-foreground">{step.status === 'running' ? '...' : step.status}</span>
         </li>)}
       </ul>}
-      {latest.producedAssets && latest.producedAssets.length > 0 && <ProducedAssetStrip assets={latest.producedAssets} onZoom={setZoom} />}
+      {latest.producedAssets && latest.producedAssets.length > 0 && <ProducedAssetStrip assets={latest.producedAssets} onZoom={setZoom} onAttachReference={onAttachReferenceAsset} selectedReferenceIds={referenceAssets.map((asset) => asset.id)} />}
       {latest.outputText && <div className="border-t border-[color-mix(in_oklab,#0C0A0F_6%,transparent)] px-3 py-2 text-[12px] text-foreground leading-relaxed whitespace-pre-wrap">
         {latest.outputText}
       </div>}
@@ -3254,7 +3507,7 @@ const AgentPanel = ({
         {runs.slice(1).map(r => <li key={r.id} className="px-2 py-1.5 rounded-md hover:bg-muted/40">
             <div className="text-[11.5px] truncate" title={r.prompt}>"{r.prompt}"</div>
             <div className="text-[9.5px] font-mono text-muted-foreground mt-0.5">{r.status} · {formatMicros(r.costMicros ?? 0)}</div>
-            {r.producedAssets && r.producedAssets.length > 0 && <ProducedAssetStrip assets={r.producedAssets} onZoom={setZoom} compact />}
+            {r.producedAssets && r.producedAssets.length > 0 && <ProducedAssetStrip assets={r.producedAssets} onZoom={setZoom} compact onAttachReference={onAttachReferenceAsset} selectedReferenceIds={referenceAssets.map((asset) => asset.id)} />}
           </li>)}
       </ul>
     </div>}
@@ -3266,21 +3519,26 @@ const AgentPanel = ({
    draggable onto the canvas (Lumen's drop target reads the ASSET_DRAG_MIME payload) and offers
    an explicit "Add" button (broadcasts magpie:add-asset-to-card) as the non-drag path. Pending
    assets (bytes not yet in R2) show a spinner until the async generate finishes (M-102). */
-const ProducedAssetStrip = ({ assets, onZoom, compact = false }: {
+const ProducedAssetStrip = ({ assets, onZoom, compact = false, onAttachReference, selectedReferenceIds = [] }: {
   assets: NonNullable<AgentRunView['producedAssets']>;
   onZoom: (asset: NonNullable<AgentRunView['producedAssets']>[number]) => void;
   compact?: boolean;
+  onAttachReference?: (asset: EditorSourceAsset) => void;
+  selectedReferenceIds?: string[];
 }) => <div className={compact ? 'mt-1.5' : 'px-3 pb-2.5'}>
     {!compact && <div className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground mb-1.5">Produced · {assets.length}</div>}
     <div className={`grid gap-1.5 ${compact ? 'grid-cols-6' : 'grid-cols-3'}`}>
-      {assets.map(asset => <ProducedAssetThumb key={asset.id} asset={asset} onZoom={onZoom} />)}
+      {assets.map(asset => <ProducedAssetThumb key={asset.id} asset={asset} onZoom={onZoom} onAttachReference={onAttachReference} referenceSelected={selectedReferenceIds.includes(asset.id)} />)}
     </div>
   </div>;
 
-const ProducedAssetThumb = ({ asset, onZoom }: {
+const ProducedAssetThumb = ({ asset, onZoom, onAttachReference, referenceSelected = false }: {
   asset: NonNullable<AgentRunView['producedAssets']>[number];
   onZoom: (asset: NonNullable<AgentRunView['producedAssets']>[number]) => void;
+  onAttachReference?: (asset: EditorSourceAsset) => void;
+  referenceSelected?: boolean;
 }) => {
+  const { t } = useTranslation();
   const ready = !!asset.previewUrl && !asset.pending;
   return <div
     draggable={ready}
@@ -3292,6 +3550,16 @@ const ProducedAssetThumb = ({ asset, onZoom }: {
     {ready
       ? <img src={asset.previewUrl ?? undefined} alt={asset.name ?? ''} draggable={false} loading="lazy" className="absolute inset-0 w-full h-full object-contain" onError={(e) => { (e.currentTarget as HTMLImageElement).style.opacity = '0'; }} />
       : <div className="absolute inset-0 grid place-items-center text-[9px] font-mono text-muted-foreground gap-1"><Loader2 className="w-3 h-3 animate-spin" /><span>generating</span></div>}
+    {ready && onAttachReference && <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); if (!referenceSelected) onAttachReference(asset); }}
+      disabled={referenceSelected}
+      title={referenceSelected ? t('editor.reference.selected') : t('editor.reference.attach')}
+      aria-label={referenceSelected ? t('editor.reference.selected') : t('editor.reference.attach')}
+      className={`absolute right-1 top-1 grid h-6 w-6 place-items-center rounded-md border bg-white/95 shadow-sm ${referenceSelected ? 'border-[#F36440] text-[#F36440]' : 'border-[#e4e7ec] text-[#42485a] hover:border-[#f3b39c] hover:text-[#d9532b]'}`}
+    >
+      {referenceSelected ? <CheckCircle2 className="h-3.5 w-3.5" /> : <FileImage className="h-3.5 w-3.5" />}
+    </button>}
     {ready && <button onClick={(e) => { e.stopPropagation(); window.dispatchEvent(new CustomEvent('magpie:add-asset-to-card', { detail: { assetId: asset.id, name: asset.name, previewUrl: asset.previewUrl, width: asset.width, height: asset.height } })); }} title="Add to card" className="absolute bottom-1 left-1 right-1 opacity-0 group-hover:opacity-100 rounded bg-[#F36440] text-primary-foreground py-0.5 text-[9px] font-semibold inline-flex items-center justify-center gap-1 transition-opacity">
       <Plus className="w-2.5 h-2.5" /> Add
     </button>}

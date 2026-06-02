@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { auth } from "edgespark/http";
 import { ctx, db, secret, storage, vars } from "edgespark";
@@ -18,6 +18,10 @@ describe("lazy pending asset materialization", () => {
     secret.values.delete("OPENAI_API_KEY");
     delete process.env.OPENAI_API_KEY;
     auth.user = { id: "owner", email: "owner@youware.com" };
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("materializes exactly one pending batch asset to ready with bytes, image cost, and auto-description", async () => {
@@ -112,6 +116,56 @@ describe("lazy pending asset materialization", () => {
     expect(db._tables.get("assets")![0].status).toBe("ready");
     const imageCosts = (db._tables.get("cost_ledger") ?? []).filter((r: any) => r.operation === "openai.imagegen.gpt-image-1");
     expect(imageCosts).toHaveLength(1);
+  });
+
+  it("materializes a reference-backed pending batch asset through the OpenAI edits path", async () => {
+    secret.values.set("OPENAI_API_KEY", "sk-test");
+    (storage as any)._seedObject("magpie-media", "assets/uploads/ref.png", 8, new Date(0), "image/png");
+    db._seed(assets, [{
+      id: "asset_ref",
+      ownerUserId: "owner",
+      status: "ready",
+      source: "upload",
+      name: "Reference",
+      s3Uri: "s3://magpie-media/assets/uploads/ref.png",
+      contentType: "image/png",
+      byteSize: 8,
+      tagsJson: "[]",
+      createdAt: 1,
+      updatedAt: 1,
+    }]);
+    let editInit: RequestInit | null = null;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+      if (String(url).includes("/images/edits")) editInit = init ?? null;
+      return new Response(JSON.stringify({
+        data: [{ b64_json: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lv3CJwAAAABJRU5ErkJggg==" }],
+        choices: [{ message: { content: "a reference-backed generated asset" } }],
+      }), { status: 200 });
+    });
+
+    const reserved = await reservePendingBatchAssets({
+      userId: "owner",
+      prompt: "one same-style sticker",
+      count: 1,
+      model: "gpt-image-1",
+      transparent: true,
+      style: STYLE,
+      agentRunId: "run_ref_batch",
+      referenceAssetIds: ["asset_ref"],
+    }, db);
+    const pending = db._tables.get("assets")!.find((a: any) => a.id === reserved.assetIds[0]);
+    expect(JSON.parse(pending.provenanceJson).referenceAssetIds).toEqual(["asset_ref"]);
+
+    const result = await materializePendingAsset(reserved.assetIds[0], db);
+    expect(result.status).toBe("ready");
+    const form = editInit?.body as FormData;
+    expect(form.get("model")).toBe("gpt-image-1");
+    expect(form.getAll("image")).toHaveLength(1);
+    expect((storage as any)._puts).toHaveLength(1);
+    const imageCosts = (db._tables.get("cost_ledger") ?? []).filter((r: any) => r.operation === "openai.imagegen.gpt-image-1");
+    expect(imageCosts).toHaveLength(1);
+    expect(imageCosts[0].agentRunId).toBe("run_ref_batch");
+    await (ctx as any)._drainBackground();
   });
 
   it("returns pending without rendering for a non-lazy generating asset", async () => {

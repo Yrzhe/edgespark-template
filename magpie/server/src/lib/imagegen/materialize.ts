@@ -10,6 +10,7 @@ import { getDailyBudgetUsd, getOpenAiApiKey } from "../ownerConfig";
 import { resolveActivePalette } from "../palettes";
 import { buildStyleInheritancePrefix, type BatchModel, type BrandStyle } from "./batch";
 import { buildImagegenPrompt, generateImageOnly, IMAGEGEN_UNIT_MICROS, validateDims, type ImageDims, type ImagegenMode } from "./openai";
+import { parseReferenceAssetIds, resolveReferenceAssets } from "./references";
 import { plannedMediaS3Uri, storeGeneratedPng } from "./store";
 
 export interface PendingBatchAssetInput {
@@ -22,6 +23,7 @@ export interface PendingBatchAssetInput {
   dims?: ImageDims | null;
   folderId?: string | null;
   agentRunId?: string | null;
+  referenceAssetIds?: string[] | null;
 }
 
 export interface MaterializeResult {
@@ -72,6 +74,7 @@ export async function reservePendingBatchAssets(input: PendingBatchAssetInput, d
         batchIndex: index,
         dims,
         agentRunId: input.agentRunId ?? null,
+        ...(input.referenceAssetIds?.length ? { referenceAssetIds: input.referenceAssetIds } : {}),
       }),
       createdAt: now,
       updatedAt: now,
@@ -109,13 +112,16 @@ export async function materializePendingAsset(assetId: string, database: any = e
     const agentRunId = typeof row.agentRunId === "string" ? row.agentRunId : typeof provenance.agentRunId === "string" ? provenance.agentRunId : null;
     const prompt = typeof provenance.prompt === "string" && provenance.prompt.trim() ? provenance.prompt : String(provenance.userPrompt ?? "");
     if (!prompt.trim()) throw new Error("prompt_missing");
+    const referenceAssetIds = Array.isArray(provenance.referenceAssetIds) && provenance.referenceAssetIds.length === 0 ? null : parseReferenceAssetIds(provenance.referenceAssetIds);
+    if (referenceAssetIds?.length && model !== "gpt-image-1") throw new Error("reference_images_require_gpt_image_1");
+    const referenceAssets = await resolveReferenceAssets(userId, referenceAssetIds, database);
 
     const quoteItem: CostQuoteItem = { provider: "openai", operation: `openai.imagegen.${model}`, units: 1, unitMicros: IMAGEGEN_UNIT_MICROS };
     const capMicros = Math.round(getDailyBudgetUsd() * 1_000_000);
     const quote = await checkCost(database, userId, [quoteItem], Date.now(), capMicros);
     if (!quote.allowed) throw new Error("budget_exhausted");
 
-    const png = await generateImageOnly({ prompt, dims, mode, model, quality: "high", apiKey: getOpenAiApiKey() });
+    const png = await generateImageOnly({ prompt, dims, mode, model, quality: "high", apiKey: getOpenAiApiKey(), referenceAssets });
     const s3Uri = await storeGeneratedPng(assetId, png);
     const nextProvenance = JSON.stringify({ ...provenance, materializedAt: Date.now(), byteSize: png.byteLength });
     await database

@@ -889,14 +889,16 @@ function EditorRoute() {
       } else setToast(error instanceof Error ? error.message : "Update failed.");
     }
   };
-  const runAgent = async (prompt: string) => {
+  const runAgent = async (prompt: string, referenceAssetIds: string[] = []) => {
     setToast(null);
     try {
+      const references = Array.from(new Set(referenceAssetIds.filter(Boolean))).slice(0, 3);
       const rule = await magpieApi.rules.active();
       const session = await magpieApi.sessions.create(`Card ${state.data.card?.title ?? "compose"}`);
       const response = await magpieApi.runs.create({
         sessionId: session.id,
         prompt,
+        ...(references.length > 0 ? { referenceAssetIds: references } : {}),
         // cardId = the open card the agent edits in place (drives add_layer_to_card etc).
         // Without it the run goes card_id=NULL + "open a card first" (M-070).
         cardId: state.data.card?.id ?? undefined,
@@ -970,8 +972,8 @@ function EditorRoute() {
       onSaveDraftAfterRules={() => void save("draft")}
       onDerive={() => void derive()}
       onPaletteChange={setActivePaletteId}
-      onRunAgent={(prompt) => void runAgent(prompt)}
-      onRetryAgentRun={(prompt) => void runAgent(prompt)}
+      onRunAgent={(prompt, referenceAssetIds) => void runAgent(prompt, referenceAssetIds)}
+      onRetryAgentRun={(prompt, referenceAssetIds) => void runAgent(prompt, referenceAssetIds)}
       onOpenDerivative={(id) => navigate(`/editor/${encodeURIComponent(id)}`)}
       onLoadTemplateLayers={loadTemplateLayers}
       onCreateShare={createShare}
