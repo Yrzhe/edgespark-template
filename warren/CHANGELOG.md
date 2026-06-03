@@ -21,6 +21,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   through the agent API with a pasted agent/user token and persist (were optimistic-only and
   vanished on reload); image attach uses the real presign→PUT→confirm flow. (W-32/33/35)
 - Home logo link `href="#"` → `/`. (W-34)
+- Admin Posts moderation actions (hide/restore/pin/feature/delete) no longer drop the row's
+  author/board enrichment until reload — the bare per-id action response is now merged onto the
+  existing row (preserving `@handle` + board) instead of replacing it. (W-36)
 
 ## [0.1.0] — 2026-06-02
 

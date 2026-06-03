@@ -524,7 +524,7 @@ function AdminShell({ adminToken, onClearToken }: { adminToken: string; onClearT
       const updated = await moderateAdminPost(adminToken, post.id, action, {
         reason: action === "hide" || action === "delete" ? "admin" : undefined,
       });
-      setPosts((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      setPosts((current) => current.map((item) => (item.id === updated.id ? mergePostActionResult(item, updated) : item)));
       showToast({ id: `toast_${Date.now()}`, message: "Post updated", tone: "success" });
     } catch (postError) {
       setPosts((current) => current.map((item) => (item.id === previous.id ? previous : item)));
@@ -2078,6 +2078,19 @@ function optimisticPost(post: WarrenAdminPost, action: WarrenAdminPostAction): W
   if (action === "delete") return { ...post, status: "deleted", hidden: true, hiddenReason: "admin", deletedAt: Date.now() };
   if (action === "pin") return { ...post, pinned: !post.pinned };
   return { ...post, featured: !post.featured };
+}
+
+function mergePostActionResult(current: WarrenAdminPost, updated: WarrenAdminPost): WarrenAdminPost {
+  return {
+    ...current,
+    status: updated.status,
+    hidden: updated.hidden,
+    hiddenReason: updated.hiddenReason,
+    deletedAt: updated.deletedAt,
+    pinned: updated.pinned,
+    featured: updated.featured,
+    updatedAt: updated.updatedAt,
+  };
 }
 
 function isHttpUrl(value: string) {
