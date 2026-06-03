@@ -11,7 +11,7 @@ export type WarrenSortMode = "latest" | "top";
 export type WarrenAdSlot = "feed-inline" | "sidebar" | "search" | "post-mid" | string;
 export type WarrenDebugState = "empty" | "error" | "loading" | "offline" | "rate-limited" | "muted" | "banned" | "rollback";
 export type WarrenAgentActivityTab = "posts" | "comments";
-export type WarrenApiErrorKind = "network" | "offline" | "rate-limited" | "muted" | "banned" | "rollback" | "server";
+export type WarrenApiErrorKind = "network" | "offline" | "rate-limited" | "auth" | "muted" | "banned" | "rollback" | "server";
 
 export type WarrenAgentSummary = {
   handle: string;
@@ -214,12 +214,27 @@ export type GetAgentProfileQuery = {
 
 export type WarrenAdminAgentStatus = "active" | "muted" | "banned";
 
+export type WarrenAdminCountBundle = {
+  total: number;
+  visible: number;
+  hidden: number;
+  deleted: number;
+};
+
 export type WarrenAdminOverview = {
   agentsTotal: number;
   posts24h: number;
   adClicks24h: number;
   activeAds: number;
   queueCount: number;
+  agentsByStatus: Record<WarrenAdminAgentStatus, number>;
+  agentsRecent24h: number;
+  posts: WarrenAdminCountBundle;
+  comments: WarrenAdminCountBundle;
+  writesRecent24h: number;
+  comments24h: number;
+  adImpressions: number;
+  adCtr: number;
 };
 
 export type WarrenAdminAgent = WarrenAgentSummary & {
@@ -248,6 +263,10 @@ export type WarrenAdminAd = {
   title: string;
   brand: string;
   slot: WarrenAdSlot;
+  body: string;
+  ctaLabel: string;
+  ctaUrl: string;
+  weight: number;
   impressions: number;
   clicks: number;
   active: boolean;
@@ -257,6 +276,85 @@ export type WarrenAdminAd = {
 
 export type WarrenAdminAdsResponse = {
   ads: WarrenAdminAd[];
+  source: "api" | "mock";
+};
+
+export type WarrenAdminQueueKind = "agent" | "post" | "comment";
+
+export type WarrenAdminQueueItem = {
+  kind: WarrenAdminQueueKind;
+  reason: string;
+  id: string;
+  title: string;
+  summary: string;
+  status?: WarrenAdminAgentStatus | string;
+  createdAt: number;
+  hiddenReason?: string | null;
+};
+
+export type WarrenAdminQueuePage = {
+  page: number;
+  pageSize: number;
+  hasNext: boolean;
+};
+
+export type WarrenAdminQueueResponse = {
+  items: WarrenAdminQueueItem[];
+  page: WarrenAdminQueuePage;
+  source: "api" | "mock";
+};
+
+export type WarrenAdminBoard = {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  sortOrder: number;
+  color: string;
+  hidden: boolean;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type WarrenAdminBoardsResponse = {
+  boards: WarrenAdminBoard[];
+  source: "api" | "mock";
+};
+
+export type WarrenAdminPostStatus = "visible" | "hidden" | "deleted";
+
+export type WarrenAdminPost = {
+  id: string;
+  boardId: string;
+  boardSlug?: string;
+  agentId: string;
+  agentHandle?: string;
+  type: WarrenPostType;
+  title: string;
+  tags: string[];
+  likeCount: number;
+  commentCount: number;
+  acceptedCommentId?: string | null;
+  pinned: boolean;
+  featured: boolean;
+  status: WarrenAdminPostStatus;
+  hidden: boolean;
+  hiddenReason?: string | null;
+  deletedAt?: number | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type WarrenAdminPostsPage = {
+  page: number;
+  pageSize: number;
+  hasNext: boolean;
+  total: number;
+};
+
+export type WarrenAdminPostsResponse = {
+  posts: WarrenAdminPost[];
+  page: WarrenAdminPostsPage;
   source: "api" | "mock";
 };
 
@@ -275,6 +373,31 @@ export type WarrenAdminAdsQuery = {
   debugState?: WarrenDebugState;
 };
 
+export type WarrenAdminQueueQuery = {
+  kind?: WarrenAdminQueueKind | "all";
+  reason?: string | "all";
+  page?: number;
+  pageSize?: number;
+  signal?: AbortSignal;
+  debugState?: WarrenDebugState;
+};
+
+export type WarrenAdminBoardsQuery = {
+  signal?: AbortSignal;
+  debugState?: WarrenDebugState;
+};
+
+export type WarrenAdminPostsQuery = {
+  board?: string;
+  type?: WarrenPostType | "all";
+  status?: WarrenAdminPostStatus | "all";
+  q?: string;
+  page?: number;
+  pageSize?: number;
+  signal?: AbortSignal;
+  debugState?: WarrenDebugState;
+};
+
 export type WarrenAdminAgentAction = "mute" | "ban" | "restore";
 
 export type CreateAdminAdInput = {
@@ -285,6 +408,42 @@ export type CreateAdminAdInput = {
   body?: string;
   ctaLabel?: string;
   ctaUrl?: string;
+  weight?: number;
+};
+
+export type UpdateAdminAdInput = Partial<Pick<CreateAdminAdInput, "title" | "slot" | "active" | "body" | "ctaLabel" | "ctaUrl" | "weight">>;
+
+export type UpsertAdminBoardInput = {
+  slug?: string;
+  name?: string;
+  description?: string;
+  sortOrder?: number;
+  color?: string;
+  hidden?: boolean;
+};
+
+export type WarrenAdminPostAction = "hide" | "restore" | "pin" | "feature" | "delete";
+export type WarrenAdminCommentAction = "hide" | "restore" | "delete";
+
+export type CreatePublicPostInput = {
+  board: string;
+  type: WarrenPostType;
+  title: string;
+  body: string;
+  tags: string[];
+  imageIds?: string[];
+};
+
+export type CreatePublicCommentInput = {
+  postId: string;
+  body: string;
+  parentId?: string | null;
+  imageIds?: string[];
+};
+
+export type WarrenUploadedImage = {
+  imageId: string;
+  image: WarrenImageSummary;
 };
 
 export type WarrenAgentRegistrationInput = {
@@ -322,6 +481,7 @@ export type WarrenAgentRegistrationResponse = {
 export type WarrenMutationQuery = {
   signal?: AbortSignal;
   debugState?: WarrenDebugState;
+  agentToken?: string;
 };
 
 export type WarrenLikeMutationResponse = {
@@ -694,6 +854,10 @@ const MOCK_ADMIN_ADS: WarrenAdminAd[] = [
     title: "Ship widgets 3x faster with EdgeSpark Pro",
     brand: "EdgeSpark",
     slot: "feed-inline",
+    body: "A sponsor draft for the feed slot.",
+    ctaLabel: "Open",
+    ctaUrl: "https://edgespark.app",
+    weight: 12,
     impressions: 18420,
     clicks: 642,
     active: true,
@@ -705,6 +869,10 @@ const MOCK_ADMIN_ADS: WarrenAdminAd[] = [
     title: "Reach agents building on Bloome",
     brand: "Warren Ads",
     slot: "sidebar",
+    body: "Sidebar sponsorship stays separate from organic knowledge.",
+    ctaLabel: "Sponsor",
+    ctaUrl: "https://edgespark.app",
+    weight: 8,
     impressions: 9310,
     clicks: 121,
     active: true,
@@ -716,6 +884,10 @@ const MOCK_ADMIN_ADS: WarrenAdminAd[] = [
     title: "Vector search for your widget data",
     brand: "PineRock",
     slot: "search",
+    body: "Search slot copy for agent builders.",
+    ctaLabel: "Learn more",
+    ctaUrl: "https://edgespark.app",
+    weight: 6,
     impressions: 5104,
     clicks: 318,
     active: true,
@@ -727,6 +899,10 @@ const MOCK_ADMIN_ADS: WarrenAdminAd[] = [
     title: "Old launch promo (paused)",
     brand: "Hatch",
     slot: "post-mid",
+    body: "Paused legacy campaign.",
+    ctaLabel: "View",
+    ctaUrl: "https://edgespark.app",
+    weight: 1,
     impressions: 22008,
     clicks: 410,
     active: false,
@@ -988,6 +1164,98 @@ export async function listAdminAgents(
   }
 }
 
+export async function listAdminQueue(
+  adminToken: string,
+  query: WarrenAdminQueueQuery = {},
+): Promise<WarrenAdminQueueResponse> {
+  throwDebugRead(query.debugState, "Warren admin queue");
+  const page = query.page ?? 1;
+  const pageSize = query.pageSize ?? DEFAULT_ADMIN_PAGE_SIZE;
+  const mock = explicitMock(() => mockListAdminQueue({ ...query, page, pageSize }));
+  if (mock) return mock;
+
+  try {
+    const response = await fetch(buildAdminQueueUrl({ ...query, page, pageSize }), {
+      headers: adminHeaders(adminToken),
+      signal: query.signal,
+    });
+    const data = await jsonFromResponse(response, "Warren admin queue failed to load.");
+    return requireApiData(normalizeAdminQueueResponse(data, page, pageSize), "Warren admin queue");
+  } catch (error) {
+    throwFetchError(error, "Warren admin queue");
+  }
+}
+
+export async function listAdminBoards(
+  adminToken: string,
+  query: WarrenAdminBoardsQuery = {},
+): Promise<WarrenAdminBoardsResponse> {
+  throwDebugRead(query.debugState, "Warren admin boards");
+  const mock = explicitMock(mockListAdminBoards);
+  if (mock) return mock;
+
+  try {
+    const response = await fetch("/api/public/admin/boards", {
+      headers: adminHeaders(adminToken),
+      signal: query.signal,
+    });
+    const data = await jsonFromResponse(response, "Warren admin boards failed to load.");
+    return requireApiData(normalizeAdminBoardsResponse(data), "Warren admin boards");
+  } catch (error) {
+    throwFetchError(error, "Warren admin boards");
+  }
+}
+
+export async function createAdminBoard(adminToken: string, input: UpsertAdminBoardInput): Promise<WarrenAdminBoard> {
+  const mock = explicitMock(() => mockCreateAdminBoard(input));
+  if (mock) return mock;
+
+  try {
+    const response = await fetch("/api/public/admin/boards", {
+      method: "POST",
+      headers: jsonAdminHeaders(adminToken),
+      body: JSON.stringify(boardPayload(input)),
+    });
+    const data = await jsonFromResponse(response, "Warren admin board create failed.");
+    return requireApiData(normalizeAdminBoard(isRecord(data) ? data.board ?? data : data), "Warren admin board create");
+  } catch (error) {
+    throwFetchError(error, "Warren admin board create");
+  }
+}
+
+export async function updateAdminBoard(adminToken: string, boardId: string, input: UpsertAdminBoardInput): Promise<WarrenAdminBoard> {
+  const mock = explicitMock(() => mockUpdateAdminBoard(boardId, input));
+  if (mock) return mock;
+
+  try {
+    const response = await fetch(`/api/public/admin/boards/${encodeURIComponent(boardId)}`, {
+      method: "PATCH",
+      headers: jsonAdminHeaders(adminToken),
+      body: JSON.stringify(boardPayload(input)),
+    });
+    const data = await jsonFromResponse(response, "Warren admin board update failed.");
+    return requireApiData(normalizeAdminBoard(isRecord(data) ? data.board ?? data : data), "Warren admin board update");
+  } catch (error) {
+    throwFetchError(error, "Warren admin board update");
+  }
+}
+
+export async function deleteAdminBoard(adminToken: string, boardId: string): Promise<WarrenAdminBoard> {
+  const mock = explicitMock(() => mockUpdateAdminBoard(boardId, { hidden: true }));
+  if (mock) return mock;
+
+  try {
+    const response = await fetch(`/api/public/admin/boards/${encodeURIComponent(boardId)}`, {
+      method: "DELETE",
+      headers: adminHeaders(adminToken),
+    });
+    const data = await jsonFromResponse(response, "Warren admin board hide failed.");
+    return requireApiData(normalizeAdminBoard(isRecord(data) ? data.board ?? data : data), "Warren admin board hide");
+  } catch (error) {
+    throwFetchError(error, "Warren admin board hide");
+  }
+}
+
 export async function moderateAdminAgent(
   adminToken: string,
   agentId: string,
@@ -1008,6 +1276,71 @@ export async function moderateAdminAgent(
     return requireApiData(normalizeAdminAgent(isRecord(data) ? data.agent ?? data : data), "Warren admin moderation");
   } catch (error) {
     throwFetchError(error, "Warren admin moderation");
+  }
+}
+
+export async function listAdminPosts(
+  adminToken: string,
+  query: WarrenAdminPostsQuery = {},
+): Promise<WarrenAdminPostsResponse> {
+  throwDebugRead(query.debugState, "Warren admin posts");
+  const page = query.page ?? 1;
+  const pageSize = query.pageSize ?? DEFAULT_ADMIN_PAGE_SIZE;
+  const mock = explicitMock(() => mockListAdminPosts({ ...query, page, pageSize }));
+  if (mock) return mock;
+
+  try {
+    const response = await fetch(buildAdminPostsUrl({ ...query, page, pageSize }), {
+      headers: adminHeaders(adminToken),
+      signal: query.signal,
+    });
+    const data = await jsonFromResponse(response, "Warren admin posts failed to load.");
+    return requireApiData(normalizeAdminPostsResponse(data, page, pageSize), "Warren admin posts");
+  } catch (error) {
+    throwFetchError(error, "Warren admin posts");
+  }
+}
+
+export async function moderateAdminPost(
+  adminToken: string,
+  postId: string,
+  action: WarrenAdminPostAction,
+  input: { reason?: string; active?: boolean } = {},
+): Promise<WarrenAdminPost> {
+  const mock = explicitMock(() => mockModerateAdminPost(postId, action, input));
+  if (mock) return mock;
+
+  try {
+    const response = await fetch(`/api/public/admin/posts/${encodeURIComponent(postId)}/${action}`, {
+      method: "POST",
+      headers: jsonAdminHeaders(adminToken),
+      body: JSON.stringify(input),
+    });
+    const data = await jsonFromResponse(response, "Warren admin post action failed.");
+    return requireApiData(normalizeAdminPost(isRecord(data) ? data.post ?? data : data), "Warren admin post action");
+  } catch (error) {
+    throwFetchError(error, "Warren admin post action");
+  }
+}
+
+export async function moderateAdminComment(
+  adminToken: string,
+  commentId: string,
+  action: WarrenAdminCommentAction,
+  input: { reason?: string } = {},
+): Promise<WarrenCommentSummary | null> {
+  if (shouldUseExplicitMock()) return null;
+
+  try {
+    const response = await fetch(`/api/public/admin/comments/${encodeURIComponent(commentId)}/${action}`, {
+      method: "POST",
+      headers: jsonAdminHeaders(adminToken),
+      body: JSON.stringify(input),
+    });
+    const data = await jsonFromResponse(response, "Warren admin comment action failed.");
+    return normalizeComment(isRecord(data) ? data.comment ?? data : data);
+  } catch (error) {
+    throwFetchError(error, "Warren admin comment action");
   }
 }
 
@@ -1068,12 +1401,30 @@ export async function createAdminAd(adminToken: string, input: CreateAdminAdInpu
         body: input.body ?? "Sponsor message awaiting copy.",
         cta_label: input.ctaLabel ?? "Open",
         cta_url: input.ctaUrl ?? "https://edgespark.app",
+        weight: input.weight ?? 1,
       }),
     });
     const data = await jsonFromResponse(response, "Warren admin ad create failed.");
     return requireApiData(normalizeAdminAd(isRecord(data) ? data.ad ?? data : data), "Warren admin ad create");
   } catch (error) {
     throwFetchError(error, "Warren admin ad create");
+  }
+}
+
+export async function updateAdminAd(adminToken: string, adId: string, input: UpdateAdminAdInput): Promise<WarrenAdminAd> {
+  const mock = explicitMock(() => mockUpdateAdminAd(adId, input));
+  if (mock) return mock;
+
+  try {
+    const response = await fetch(`/api/public/admin/ads/${encodeURIComponent(adId)}`, {
+      method: "PATCH",
+      headers: jsonAdminHeaders(adminToken),
+      body: JSON.stringify(adPayload(input)),
+    });
+    const data = await jsonFromResponse(response, "Warren admin ad edit failed.");
+    return requireApiData(normalizeAdminAd(isRecord(data) ? data.ad ?? data : data), "Warren admin ad edit");
+  } catch (error) {
+    throwFetchError(error, "Warren admin ad edit");
   }
 }
 
@@ -1110,6 +1461,117 @@ export async function registerAgent(
   }
 }
 
+export async function createPublicPost(
+  agentToken: string,
+  input: CreatePublicPostInput,
+  query: WarrenMutationQuery = {},
+): Promise<WarrenPostSummary> {
+  throwDebugMutation(query.debugState, "Warren post create");
+  const mock = explicitMock(() => mockCreatePublicPost(input));
+  if (mock) return mock;
+
+  try {
+    const response = await fetch("/api/public/posts", {
+      method: "POST",
+      headers: bearerJsonHeaders(agentToken),
+      body: JSON.stringify({
+        board: input.board,
+        type: input.type,
+        title: input.title,
+        body: input.body,
+        tags: input.tags,
+        image_ids: input.imageIds ?? [],
+      }),
+      signal: query.signal,
+    });
+    const data = await jsonFromResponse(response, "Warren post create failed.");
+    return requireApiData(normalizePost(isRecord(data) ? data.post ?? data : data), "Warren post create");
+  } catch (error) {
+    throwFetchError(error, "Warren post create");
+  }
+}
+
+export async function createPublicComment(
+  agentToken: string,
+  input: CreatePublicCommentInput,
+  query: WarrenMutationQuery = {},
+): Promise<WarrenCommentSummary> {
+  throwDebugMutation(query.debugState, "Warren comment create");
+  const mock = explicitMock(() => mockCreatePublicComment(input));
+  if (mock) return mock;
+
+  try {
+    const response = await fetch(`/api/public/posts/${encodeURIComponent(input.postId)}/comments`, {
+      method: "POST",
+      headers: bearerJsonHeaders(agentToken),
+      body: JSON.stringify({
+        body: input.body,
+        parent_id: input.parentId || undefined,
+        image_ids: input.imageIds ?? [],
+      }),
+      signal: query.signal,
+    });
+    const data = await jsonFromResponse(response, "Warren comment create failed.");
+    return requireApiData(normalizeComment(isRecord(data) ? data.comment ?? data : data), "Warren comment create");
+  } catch (error) {
+    throwFetchError(error, "Warren comment create");
+  }
+}
+
+export async function uploadWarrenImage(
+  agentToken: string,
+  file: File,
+  kind: "post-image" | "comment-image",
+  query: WarrenMutationQuery = {},
+): Promise<WarrenUploadedImage> {
+  throwDebugMutation(query.debugState, "Warren image upload");
+  const mock = explicitMock(() => mockUploadWarrenImage(file));
+  if (mock) return mock;
+
+  try {
+    const presignResponse = await fetch("/api/public/uploads/presign", {
+      method: "POST",
+      headers: bearerJsonHeaders(agentToken),
+      body: JSON.stringify({
+        kind,
+        content_type: file.type,
+        size: file.size,
+        filename: file.name,
+      }),
+      signal: query.signal,
+    });
+    const presign = await jsonFromResponse(presignResponse, "Warren image presign failed.");
+    if (!isRecord(presign)) throw serverError("Warren image presign returned an unexpected response.");
+    const uploadUrl = stringValue(presign.upload_url ?? presign.uploadUrl);
+    const key = stringValue(presign.key);
+    const requiredHeaders = isRecord(presign.required_headers) ? presign.required_headers : isRecord(presign.requiredHeaders) ? presign.requiredHeaders : {};
+    if (!uploadUrl || !key) throw serverError("Warren image presign returned an incomplete response.");
+
+    await putUploadFile(uploadUrl, file, requiredHeaders);
+
+    const confirmResponse = await fetch("/api/public/uploads/confirm", {
+      method: "POST",
+      headers: bearerJsonHeaders(agentToken),
+      body: JSON.stringify({ key, kind }),
+      signal: query.signal,
+    });
+    const confirmed = await jsonFromResponse(confirmResponse, "Warren image confirm failed.");
+    if (!isRecord(confirmed)) throw serverError("Warren image confirm returned an unexpected response.");
+    const imageId = stringValue(confirmed.image_id ?? confirmed.imageId);
+    const image = normalizeImage({
+      id: imageId,
+      url: confirmed.url,
+      width: confirmed.width,
+      height: confirmed.height,
+      sort_order: 0,
+    });
+    if (!imageId || !image) throw serverError("Warren image confirm returned an incomplete response.");
+    return { imageId, image };
+  } catch (error) {
+    throwFetchError(error, "Warren image upload");
+  }
+}
+
 export async function setPostLike(
   postId: string,
   liked: boolean,
@@ -1125,6 +1587,7 @@ export async function setPostLike(
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
+        ...(query.agentToken ? { Authorization: `Bearer ${query.agentToken}` } : {}),
       },
       body: JSON.stringify({ liked }),
       signal: query.signal,
@@ -1259,12 +1722,25 @@ function mockGetPublicAgentProfile(handle: string, query: GetAgentProfileQuery):
 }
 
 function mockAdminOverview(): WarrenAdminOverview {
+  const active = MOCK_ADMIN_AGENTS.filter((agent) => agent.status === "active").length;
+  const muted = MOCK_ADMIN_AGENTS.filter((agent) => agent.status === "muted").length;
+  const banned = MOCK_ADMIN_AGENTS.filter((agent) => agent.status === "banned").length;
+  const impressions = MOCK_ADMIN_ADS.reduce((sum, ad) => sum + ad.impressions, 0);
+  const clicks = MOCK_ADMIN_ADS.reduce((sum, ad) => sum + ad.clicks, 0);
   return {
     agentsTotal: 1284,
     posts24h: 96,
-    adClicks24h: MOCK_ADMIN_ADS.reduce((sum, ad) => sum + ad.clicks, 0),
+    adClicks24h: clicks,
     activeAds: MOCK_ADMIN_ADS.filter((ad) => ad.active).length,
     queueCount: 2,
+    agentsByStatus: { active, muted, banned },
+    agentsRecent24h: 8,
+    posts: { total: 247, visible: 232, hidden: 11, deleted: 4 },
+    comments: { total: 892, visible: 861, hidden: 24, deleted: 7 },
+    writesRecent24h: 118,
+    comments24h: 22,
+    adImpressions: impressions,
+    adCtr: impressions > 0 ? clicks / impressions : 0,
   };
 }
 
@@ -1294,10 +1770,138 @@ function mockListAdminAgents(query: WarrenAdminAgentsQuery): WarrenAdminAgentsRe
   };
 }
 
+function mockListAdminQueue(query: WarrenAdminQueueQuery): WarrenAdminQueueResponse {
+  const items: WarrenAdminQueueItem[] = [
+    {
+      kind: "post",
+      reason: "hidden",
+      id: MOCK_POSTS[1].id,
+      title: MOCK_POSTS[1].title,
+      summary: "Hidden pending owner review.",
+      createdAt: Date.now() - 45 * 60 * 1000,
+      hiddenReason: "low_karma_link",
+    },
+    {
+      kind: "agent",
+      reason: "muted",
+      id: MOCK_ADMIN_AGENTS[4].id,
+      title: MOCK_ADMIN_AGENTS[4].handle,
+      summary: MOCK_ADMIN_AGENTS[4].displayName,
+      status: "muted",
+      createdAt: MOCK_ADMIN_AGENTS[4].joinedAt,
+    },
+    {
+      kind: "comment",
+      reason: "low_karma_link",
+      id: "comment_mock_1",
+      title: "Comment on storage thread",
+      summary: "Contains a low-karma outbound link.",
+      createdAt: Date.now() - 2 * 60 * 60 * 1000,
+    },
+  ];
+  const page = query.page ?? 1;
+  const pageSize = query.pageSize ?? DEFAULT_ADMIN_PAGE_SIZE;
+  const filtered = items
+    .filter((item) => !query.kind || query.kind === "all" || item.kind === query.kind)
+    .filter((item) => !query.reason || query.reason === "all" || item.reason === query.reason);
+  const offset = (page - 1) * pageSize;
+  return {
+    items: filtered.slice(offset, offset + pageSize),
+    page: { page, pageSize, hasNext: offset + pageSize < filtered.length },
+    source: "mock",
+  };
+}
+
+function mockListAdminBoards(): WarrenAdminBoardsResponse {
+  return {
+    boards: mockBoards().map((board, index) => ({
+      id: `board_${board.slug}`,
+      slug: board.slug,
+      name: board.name,
+      description: board.description,
+      sortOrder: board.sortOrder,
+      color: board.color,
+      hidden: index === 3,
+      createdAt: Date.now() - (index + 4) * day,
+      updatedAt: Date.now() - index * hour,
+    })),
+    source: "mock",
+  };
+}
+
+function mockCreateAdminBoard(input: UpsertAdminBoardInput): WarrenAdminBoard {
+  return {
+    id: `board_${Date.now()}`,
+    slug: input.slug ?? "new-board",
+    name: input.name ?? "New board",
+    description: input.description ?? "New Warren board.",
+    sortOrder: input.sortOrder ?? 50,
+    color: input.color ?? WARREN_COLORS.navy,
+    hidden: Boolean(input.hidden),
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+}
+
+function mockUpdateAdminBoard(boardId: string, input: UpsertAdminBoardInput): WarrenAdminBoard {
+  const board = mockListAdminBoards().boards.find((item) => item.id === boardId) ?? mockListAdminBoards().boards[0];
+  return { ...board, ...input, updatedAt: Date.now(), sortOrder: input.sortOrder ?? board.sortOrder };
+}
+
 function mockModerateAdminAgent(agentId: string, action: WarrenAdminAgentAction): WarrenAdminAgent {
   const agent = MOCK_ADMIN_AGENTS.find((item) => item.id === agentId) ?? MOCK_ADMIN_AGENTS[0];
   const nextStatus: WarrenAdminAgentStatus = action === "ban" ? "banned" : action === "mute" ? "muted" : "active";
   return { ...agent, status: nextStatus };
+}
+
+function mockListAdminPosts(query: WarrenAdminPostsQuery): WarrenAdminPostsResponse {
+  const page = query.page ?? 1;
+  const pageSize = query.pageSize ?? DEFAULT_ADMIN_PAGE_SIZE;
+  const filtered = MOCK_POSTS
+    .filter((post) => !query.type || query.type === "all" || post.type === query.type)
+    .filter((post) => !query.board || query.board === "all" || post.board.slug === query.board)
+    .filter((post) => !query.q?.trim() || post.title.toLowerCase().includes(query.q.trim().toLowerCase()))
+    .map((post, index): WarrenAdminPost => ({
+      id: post.id,
+      boardId: `board_${post.board.slug}`,
+      boardSlug: post.board.slug,
+      agentId: `agent_${post.agent.handle}`,
+      agentHandle: post.agent.handle,
+      type: post.type,
+      title: post.title,
+      tags: post.tags,
+      likeCount: post.likeCount,
+      commentCount: post.commentCount,
+      pinned: Boolean(post.pinned),
+      featured: Boolean(post.featured),
+      status: query.status === "hidden" || index === 2 ? "hidden" : query.status === "deleted" && index === 0 ? "deleted" : "visible",
+      hidden: query.status === "hidden" || index === 2,
+      hiddenReason: index === 2 ? "duplicate" : null,
+      deletedAt: query.status === "deleted" && index === 0 ? Date.now() - hour : null,
+      createdAt: post.createdAt,
+      updatedAt: post.createdAt,
+    }))
+    .filter((post) => {
+      if (!query.status || query.status === "all") return true;
+      if (query.status === "deleted") return Boolean(post.deletedAt);
+      if (query.status === "hidden") return post.hidden && !post.deletedAt;
+      return !post.hidden && !post.deletedAt;
+    });
+  const offset = (page - 1) * pageSize;
+  return {
+    posts: filtered.slice(offset, offset + pageSize),
+    page: { page, pageSize, total: filtered.length, hasNext: offset + pageSize < filtered.length },
+    source: "mock",
+  };
+}
+
+function mockModerateAdminPost(postId: string, action: WarrenAdminPostAction, input: { reason?: string; active?: boolean }): WarrenAdminPost {
+  const post = mockListAdminPosts({ page: 1, pageSize: 50 }).posts.find((item) => item.id === postId) ?? mockListAdminPosts({}).posts[0];
+  if (action === "hide") return { ...post, status: "hidden", hidden: true, hiddenReason: input.reason ?? "admin" };
+  if (action === "restore") return { ...post, status: "visible", hidden: false, hiddenReason: null, deletedAt: null };
+  if (action === "delete") return { ...post, status: "deleted", hidden: true, hiddenReason: input.reason ?? "admin", deletedAt: Date.now() };
+  if (action === "pin") return { ...post, pinned: input.active ?? !post.pinned };
+  return { ...post, featured: input.active ?? !post.featured };
 }
 
 function mockToggleAdminAd(adId: string, active: boolean): WarrenAdminAd {
@@ -1311,12 +1915,63 @@ function mockCreateAdminAd(input: CreateAdminAdInput): WarrenAdminAd {
     title: input.title,
     brand: input.brand,
     slot: input.slot,
+    body: input.body ?? "Sponsor message awaiting copy.",
+    ctaLabel: input.ctaLabel ?? "Open",
+    ctaUrl: input.ctaUrl ?? "https://edgespark.app",
+    weight: input.weight ?? 1,
     impressions: 0,
     clicks: 0,
     active: Boolean(input.active),
     tone: WARREN_COLORS.navy,
     sponsored: true,
   };
+}
+
+function mockUpdateAdminAd(adId: string, input: UpdateAdminAdInput): WarrenAdminAd {
+  const ad = MOCK_ADMIN_ADS.find((item) => item.id === adId) ?? MOCK_ADMIN_ADS[0];
+  return { ...ad, ...input };
+}
+
+function mockCreatePublicPost(input: CreatePublicPostInput): WarrenPostSummary {
+  const boardValue = board(input.board);
+  return {
+    id: `post_${Date.now()}`,
+    board: boardValue,
+    agent: MOCK_AGENTS[0],
+    type: input.type,
+    title: input.title,
+    tags: input.tags,
+    likeCount: 0,
+    commentCount: 0,
+    createdAt: Date.now(),
+  };
+}
+
+function mockCreatePublicComment(input: CreatePublicCommentInput): WarrenCommentSummary {
+  return {
+    id: `comment_${Date.now()}`,
+    postId: input.postId,
+    parentId: input.parentId ?? null,
+    agent: MOCK_AGENTS[1],
+    body: input.body,
+    likeCount: 0,
+    createdAt: Date.now(),
+    images: [],
+    replies: [],
+  };
+}
+
+function mockUploadWarrenImage(file: File): WarrenUploadedImage {
+  const image: WarrenImageSummary = {
+    id: `upload_${Date.now()}`,
+    url: URL.createObjectURL(file),
+    width: 1,
+    height: 1,
+    alt: file.name,
+    sortOrder: 0,
+    toneIndex: 2,
+  };
+  return { imageId: `img_${Date.now()}`, image };
 }
 
 function mockRegisterAgent(input: WarrenAgentRegistrationInput): WarrenAgentRegistrationResponse {
@@ -1381,10 +2036,67 @@ function buildAdminAgentsUrl(query: WarrenAdminAgentsQuery): string {
   return `/api/public/admin/agents?${params.toString()}`;
 }
 
+function buildAdminQueueUrl(query: WarrenAdminQueueQuery): string {
+  const params = new URLSearchParams();
+  if (query.kind && query.kind !== "all") params.set("kind", query.kind);
+  if (query.reason && query.reason !== "all") params.set("reason", query.reason);
+  params.set("page", String(query.page ?? 1));
+  return `/api/public/admin/queue?${params.toString()}`;
+}
+
+function buildAdminPostsUrl(query: WarrenAdminPostsQuery): string {
+  const params = new URLSearchParams();
+  if (query.board && query.board !== "all") params.set("board", query.board);
+  if (query.type && query.type !== "all") params.set("type", query.type);
+  if (query.status && query.status !== "all") params.set("status", query.status);
+  if (query.q?.trim()) params.set("q", query.q.trim());
+  params.set("page", String(query.page ?? 1));
+  params.set("page_size", String(query.pageSize ?? DEFAULT_ADMIN_PAGE_SIZE));
+  return `/api/public/admin/posts?${params.toString()}`;
+}
+
 function adminHeaders(adminToken: string): HeadersInit {
   return {
     Accept: "application/json",
     "X-Admin-Token": adminToken,
+  };
+}
+
+function jsonAdminHeaders(adminToken: string): HeadersInit {
+  return {
+    ...adminHeaders(adminToken),
+    "Content-Type": "application/json",
+  };
+}
+
+function bearerJsonHeaders(token: string): HeadersInit {
+  return {
+    Accept: "application/json",
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+  };
+}
+
+function boardPayload(input: UpsertAdminBoardInput) {
+  return {
+    slug: input.slug,
+    name: input.name,
+    description: input.description,
+    sort_order: input.sortOrder,
+    color: input.color,
+    hidden: input.hidden,
+  };
+}
+
+function adPayload(input: UpdateAdminAdInput | CreateAdminAdInput) {
+  return {
+    title: input.title,
+    slot: input.slot,
+    body: input.body,
+    cta_label: input.ctaLabel,
+    cta_url: input.ctaUrl,
+    active: input.active,
+    weight: input.weight,
   };
 }
 
@@ -1491,46 +2203,128 @@ function normalizeAdminOverview(data: unknown): WarrenAdminOverview | null {
 
   if (isRecord(data.agents) || isRecord(data.writes) || isRecord(data.queue) || isRecord(data.ads)) {
     if (!isRecord(data.agents) || !isRecord(data.writes) || !isRecord(data.queue) || !isRecord(data.ads)) return null;
-    return normalizeAdminOverviewNumbers({
-      agentsTotal: data.agents.total,
-      posts24h: data.writes.posts_24h,
-      adClicks24h: data.ads.clicks,
-      activeAds: data.ads.active,
-      queueCount: data.queue.count,
-    });
+    const byStatus = isRecord(data.agents.by_status) ? data.agents.by_status : {};
+    const posts = normalizeAdminCountBundle(data.posts);
+    const comments = normalizeAdminCountBundle(data.comments);
+    if (!posts || !comments) return null;
+    const impressions = numberValue(data.ads.impressions, 0);
+    const clicks = numberValue(data.ads.clicks, 0);
+    return {
+      agentsTotal: numberValue(data.agents.total, 0),
+      posts24h: numberValue(data.writes.posts_24h ?? data.writes.posts24h, 0),
+      adClicks24h: clicks,
+      activeAds: numberValue(data.ads.active, 0),
+      queueCount: numberValue(data.queue.count, 0),
+      agentsByStatus: {
+        active: numberValue(byStatus.active, 0),
+        muted: numberValue(byStatus.muted, 0),
+        banned: numberValue(byStatus.banned, 0),
+      },
+      agentsRecent24h: numberValue(data.agents.recent_24h ?? data.agents.recent24h, 0),
+      posts,
+      comments,
+      writesRecent24h: numberValue(data.writes.recent_24h ?? data.writes.recent24h, 0),
+      comments24h: numberValue(data.writes.comments_24h ?? data.writes.comments24h, 0),
+      adImpressions: impressions,
+      adCtr: numberValue(data.ads.ctr, impressions > 0 ? clicks / impressions : 0),
+    };
   }
 
-  return normalizeAdminOverviewNumbers({
-    agentsTotal: data.agents_total ?? data.agentsTotal,
-    posts24h: data.posts_24h ?? data.posts24h,
-    adClicks24h: data.ad_clicks_24h ?? data.adClicks24h,
-    activeAds: data.active_ads ?? data.activeAds,
-    queueCount: data.queue_count ?? data.queueCount,
-  });
-}
-
-function normalizeAdminOverviewNumbers(values: Record<keyof WarrenAdminOverview, unknown>): WarrenAdminOverview | null {
-  const agentsTotal = requiredNumberValue(values.agentsTotal);
-  const posts24h = requiredNumberValue(values.posts24h);
-  const adClicks24h = requiredNumberValue(values.adClicks24h);
-  const activeAds = requiredNumberValue(values.activeAds);
-  const queueCount = requiredNumberValue(values.queueCount);
-  if (
-    agentsTotal === null ||
-    posts24h === null ||
-    adClicks24h === null ||
-    activeAds === null ||
-    queueCount === null
-  ) {
-    return null;
-  }
-
+  const agentsTotal = numberValue(data.agents_total ?? data.agentsTotal, 0);
+  const posts24h = numberValue(data.posts_24h ?? data.posts24h, 0);
+  const adClicks24h = numberValue(data.ad_clicks_24h ?? data.adClicks24h, 0);
+  const activeAds = numberValue(data.active_ads ?? data.activeAds, 0);
+  const queueCount = numberValue(data.queue_count ?? data.queueCount, 0);
   return {
     agentsTotal,
     posts24h,
     adClicks24h,
     activeAds,
     queueCount,
+    agentsByStatus: { active: agentsTotal, muted: 0, banned: 0 },
+    agentsRecent24h: 0,
+    posts: { total: 0, visible: 0, hidden: 0, deleted: 0 },
+    comments: { total: 0, visible: 0, hidden: 0, deleted: 0 },
+    writesRecent24h: posts24h,
+    comments24h: 0,
+    adImpressions: 0,
+    adCtr: 0,
+  };
+}
+
+function normalizeAdminCountBundle(raw: unknown): WarrenAdminCountBundle | null {
+  if (!isRecord(raw)) return null;
+  return {
+    total: numberValue(raw.total, 0),
+    visible: numberValue(raw.visible, 0),
+    hidden: numberValue(raw.hidden, 0),
+    deleted: numberValue(raw.deleted, 0),
+  };
+}
+
+function normalizeAdminQueueResponse(data: unknown, page: number, pageSize: number): WarrenAdminQueueResponse | null {
+  if (!isRecord(data) || !Array.isArray(data.items)) return null;
+  const items = normalizeCollection(data.items, normalizeAdminQueueItem);
+  if (!items) return null;
+  const rawPage = isRecord(data.page) ? data.page : {};
+  return {
+    items,
+    page: {
+      page: numberValue(rawPage.page, page),
+      pageSize: numberValue(rawPage.page_size ?? rawPage.pageSize, pageSize),
+      hasNext: Boolean(rawPage.has_next ?? rawPage.hasNext),
+    },
+    source: "api",
+  };
+}
+
+function normalizeAdminQueueItem(raw: unknown): WarrenAdminQueueItem | null {
+  if (!isRecord(raw)) return null;
+  const kind = raw.kind === "agent" || raw.kind === "post" || raw.kind === "comment" ? raw.kind : null;
+  const id = stringValue(raw.id);
+  const title = stringValue(raw.title);
+  const reason = stringValue(raw.reason);
+  if (!kind || !id || !title || !reason) return null;
+  return {
+    kind,
+    reason,
+    id,
+    title,
+    summary: stringValue(raw.summary),
+    status: stringValue(raw.status) || undefined,
+    createdAt: dateValue(raw.created_at ?? raw.createdAt),
+    hiddenReason: stringValue(raw.hidden_reason ?? raw.hiddenReason) || null,
+  };
+}
+
+function normalizeAdminBoardsResponse(data: unknown): WarrenAdminBoardsResponse | null {
+  const rawBoards = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.boards) ? data.boards : null;
+  if (!rawBoards) return null;
+  const boards = normalizeCollection(rawBoards, normalizeAdminBoard);
+  if (!boards) return null;
+  return {
+    boards: boards.sort((a, b) => a.sortOrder - b.sortOrder || a.slug.localeCompare(b.slug)),
+    source: "api",
+  };
+}
+
+function normalizeAdminBoard(raw: unknown): WarrenAdminBoard | null {
+  if (!isRecord(raw)) return null;
+  const id = stringValue(raw.id);
+  const slug = stringValue(raw.slug);
+  const name = stringValue(raw.name);
+  if (!id || !slug || !name) return null;
+  const fallback = WARREN_DEFAULT_BOARDS.find((item) => item.slug === slug);
+  return {
+    id,
+    slug,
+    name,
+    description: stringValue(raw.description),
+    sortOrder: numberValue(raw.sort_order ?? raw.sortOrder, fallback?.sortOrder ?? 0),
+    color: stringValue(raw.color) || fallback?.color || WARREN_COLORS.navy,
+    hidden: Boolean(raw.hidden),
+    createdAt: dateValue(raw.created_at ?? raw.createdAt),
+    updatedAt: dateValue(raw.updated_at ?? raw.updatedAt),
   };
 }
 
@@ -1570,6 +2364,64 @@ function normalizeAdminAgent(raw: unknown): WarrenAdminAgent | null {
   };
 }
 
+function normalizeAdminPostsResponse(data: unknown, page: number, pageSize: number): WarrenAdminPostsResponse | null {
+  if (!isRecord(data)) return null;
+  const rawPosts = Array.isArray(data.posts) ? data.posts : Array.isArray(data.items) ? data.items : null;
+  if (!rawPosts) return null;
+  const posts = normalizeCollection(rawPosts, normalizeAdminPost);
+  if (!posts) return null;
+  const rawPage = isRecord(data.page) ? data.page : data;
+  return {
+    posts,
+    page: {
+      page: numberValue(rawPage.page, page),
+      pageSize: numberValue(rawPage.page_size ?? rawPage.pageSize, pageSize),
+      total: numberValue(rawPage.total, posts.length),
+      hasNext: Boolean(rawPage.has_next ?? rawPage.hasNext),
+    },
+    source: "api",
+  };
+}
+
+function normalizeAdminPost(raw: unknown): WarrenAdminPost | null {
+  if (!isRecord(raw)) return null;
+  const id = stringValue(raw.id);
+  const type = postTypeValue(raw.type);
+  const title = stringValue(raw.title);
+  if (!id || !type || !title) return null;
+  const board = isRecord(raw.board) ? raw.board : {};
+  const agent = isRecord(raw.author) ? raw.author : isRecord(raw.agent) ? raw.agent : {};
+  const deletedAt = raw.deleted_at ?? raw.deletedAt;
+  const status = raw.status === "hidden" || raw.status === "deleted" || raw.status === "visible"
+    ? raw.status
+    : deletedAt
+      ? "deleted"
+      : raw.hidden
+        ? "hidden"
+        : "visible";
+  return {
+    id,
+    boardId: stringValue(raw.board_id ?? raw.boardId) || stringValue(board.id),
+    boardSlug: stringValue(raw.board_slug ?? raw.boardSlug ?? board.slug) || undefined,
+    agentId: stringValue(raw.agent_id ?? raw.agentId) || stringValue(agent.id),
+    agentHandle: stringValue(raw.agent_handle ?? raw.agentHandle ?? agent.handle) || undefined,
+    type,
+    title,
+    tags: arrayOfStrings(raw.tags),
+    likeCount: numberValue(raw.like_count ?? raw.likeCount, 0),
+    commentCount: numberValue(raw.comment_count ?? raw.commentCount, 0),
+    acceptedCommentId: stringValue(raw.accepted_comment_id ?? raw.acceptedCommentId) || null,
+    pinned: Boolean(raw.pinned),
+    featured: Boolean(raw.featured),
+    status,
+    hidden: Boolean(raw.hidden) || status === "hidden" || status === "deleted",
+    hiddenReason: stringValue(raw.hidden_reason ?? raw.hiddenReason) || null,
+    deletedAt: deletedAt === null || deletedAt === undefined ? null : dateValue(deletedAt),
+    createdAt: dateValue(raw.created_at ?? raw.createdAt),
+    updatedAt: dateValue(raw.updated_at ?? raw.updatedAt),
+  };
+}
+
 function normalizeAdminAdsResponse(data: unknown): WarrenAdminAdsResponse | null {
   if (!isRecord(data) || !Array.isArray(data.ads)) return null;
   const ads = normalizeCollection(data.ads, normalizeAdminAd);
@@ -1593,6 +2445,10 @@ function normalizeAdminAd(raw: unknown): WarrenAdminAd | null {
     title,
     brand: stringValue(raw.brand) || "Warren Ads",
     slot,
+    body: stringValue(raw.body ?? raw.body_text ?? raw.bodyText),
+    ctaLabel: stringValue(raw.cta_label ?? raw.ctaLabel) || "Open",
+    ctaUrl: stringValue(raw.cta_url ?? raw.ctaUrl) || "https://edgespark.app",
+    weight: numberValue(raw.weight, 1),
     impressions,
     clicks,
     active: Boolean(raw.active),
@@ -2022,6 +2878,20 @@ function requireApiData<T>(value: T | null, label: string): T {
   throw serverError(`${label} returned an unexpected response.`);
 }
 
+async function putUploadFile(uploadUrl: string, file: File, requiredHeaders: Record<string, unknown>) {
+  const headers: Record<string, string> = {};
+  for (const [key, value] of Object.entries(requiredHeaders)) {
+    if (typeof value === "string") headers[key] = value;
+  }
+  if (!headers["Content-Type"] && !headers["content-type"] && file.type) headers["Content-Type"] = file.type;
+  const response = await fetch(uploadUrl, {
+    method: "PUT",
+    headers,
+    body: file,
+  });
+  if (!response.ok) throw new WarrenApiError("Warren image upload failed.", { kind: "server", status: response.status, code: "upload_failed" });
+}
+
 function throwFetchError(error: unknown, label: string): never {
   if (error instanceof DOMException && error.name === "AbortError") throw error;
   if (isWarrenApiError(error)) throw error;
@@ -2051,8 +2921,12 @@ async function errorFromResponse(response: Response, fallbackMessage: string): P
   }
 
   if (response.status === 429) return rateLimitError(message, Number.isFinite(retryAfter) ? retryAfter : 42, code);
+  if (response.status === 401 || code === "missing_bearer" || code === "invalid_token" || code === "invalid_admin_token") {
+    return authError(message, response.status, code || "auth_required");
+  }
   if (code === "agent_muted") return mutedError(message);
-  if (code === "agent_banned" || response.status === 401) return bannedError(message);
+  if (code === "agent_banned") return bannedError(message);
+  if (response.status === 403) return authError(message, response.status, code || "forbidden");
   return new WarrenApiError(message, { kind: "server", status: response.status, code });
 }
 
@@ -2066,6 +2940,10 @@ function offlineError(label: string) {
 
 function rateLimitError(label: string, retryAfter = 42, code = "rate_limited") {
   return new WarrenApiError(`${label} is rate limited.`, { kind: "rate-limited", status: 429, retryAfter, code });
+}
+
+function authError(message: string, status = 401, code = "auth_required") {
+  return new WarrenApiError(message || "Agent/user token required.", { kind: "auth", status, code });
 }
 
 function mutedError(label: string) {

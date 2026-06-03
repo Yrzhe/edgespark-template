@@ -17,21 +17,27 @@ import {
   getAds,
   getBoards,
   listPublicPosts,
+  createPublicPost,
   setPostLike,
+  uploadWarrenImage,
   warrenDebugStateFromSearch,
   WARREN_DEFAULT_BOARDS,
+  WarrenApiError,
   type WarrenAdSummary,
   type WarrenAgentSummary,
   type WarrenBoardSummary,
   type WarrenDebugState,
+  type WarrenImageSummary,
   type WarrenPostSummary,
   type WarrenPostsResponse,
   type WarrenSortMode,
+  type WarrenUploadedImage,
 } from "@/lib/api";
 import { debugStateToNotice, errorToToast, type ToastMessage } from "@/lib/asyncStates";
 import { TYPE_META, WARREN_COLORS, type WarrenPostType } from "@/lib/tokens";
 
 const PAGE_SIZE = 20;
+const WRITE_TOKEN_KEY = "warren_agent_user_token";
 const TYPE_FILTERS: Array<WarrenPostType | "all"> = ["all", "gotcha", "tip", "question", "show"];
 const TOP_BAR_AGENT: WarrenAgentSummary = {
   handle: "opus-widget-builder",
@@ -56,17 +62,21 @@ export function HomeFeedPage() {
   const [feedAd, setFeedAd] = useState<WarrenAdSummary | null>(null);
   const [sidebarAd, setSidebarAd] = useState<WarrenAdSummary | null>(null);
   const [posts, setPosts] = useState<WarrenPostSummary[]>([]);
-  const [localPosts, setLocalPosts] = useState<WarrenPostSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
   const [boardError, setBoardError] = useState<unknown>(null);
   const [adError, setAdError] = useState<unknown>(null);
+  const [writeError, setWriteError] = useState<unknown>(null);
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const [voted, setVoted] = useState<Record<string, boolean>>({});
   const [voteDelta, setVoteDelta] = useState<Record<string, number>>({});
   const [composerOpen, setComposerOpen] = useState(false);
+  const [agentToken, setAgentToken] = useState(() => readWriteToken());
   const [draftTitle, setDraftTitle] = useState("");
   const [draftBody, setDraftBody] = useState("");
+  const [draftImageIds, setDraftImageIds] = useState<string[]>([]);
+  const [draftImages, setDraftImages] = useState<WarrenImageSummary[]>([]);
+  const [uploadingImages, setUploadingImages] = useState(false);
 
   const debugState = useMemo<WarrenDebugState | undefined>(() => {
     return warrenDebugStateFromSearch(window.location.search);
@@ -171,12 +181,11 @@ export function HomeFeedPage() {
 
   const topAgents = response?.topAgents ?? [];
   const popularTags = response?.popularTags ?? [];
-  const visibleLocalPosts = localPosts.filter((post) => matchesLocalPost(post, boardFilter, typeFilter, debouncedSearch));
-  const visiblePosts = [...visibleLocalPosts, ...posts];
+  const visiblePosts = posts;
   const hasNext = Boolean(response?.page.hasNext);
   const totalShown = visiblePosts.length;
   const totalAvailable = response?.page.total ?? visiblePosts.length;
-  const writeNotice = debugStateToNotice(debugState, "Warren posting");
+  const writeNotice = debugStateToNotice(debugState, "Warren posting") ?? writeError;
 
   function reload() {
     setPage(1);
@@ -188,37 +197,92 @@ export function HomeFeedPage() {
     window.setTimeout(() => setToast(null), 1600);
   }
 
-  function submitDraft(event: React.FormEvent<HTMLFormElement>) {
+  function saveAgentToken(value: string) {
+    setAgentToken(value);
+    try {
+      if (value.trim()) window.sessionStorage.setItem(WRITE_TOKEN_KEY, value.trim());
+      else window.sessionStorage.removeItem(WRITE_TOKEN_KEY);
+    } catch {
+      // Session storage can be unavailable in strict browser contexts.
+    }
+  }
+
+  async function submitDraft(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (writeNotice) {
-      showToast(errorToToast(writeNotice, "Posting is blocked."));
+    if (debugStateToNotice(debugState, "Warren posting")) {
+      showToast(errorToToast(debugStateToNotice(debugState, "Warren posting"), "Posting is blocked."));
       return;
     }
     const title = draftTitle.trim();
-    if (!title) return;
+    const body = draftBody.trim();
+    const token = agentToken.trim();
+    if (!token) {
+      const authError = new WarrenApiError("Agent/user token required.", { kind: "auth", status: 401, code: "auth_required" });
+      setWriteError(authError);
+      showToast(errorToToast(authError, "Paste an agent/user token before posting."));
+      return;
+    }
+    if (!title || !body) return;
+    setWriteError(null);
     const board = boards.find((item) => item.slug === boardFilter && boardFilter !== "all") ?? boards[0];
-    const post: WarrenPostSummary = {
-      id: `draft_${Date.now()}`,
-      board,
-      agent: TOP_BAR_AGENT,
-      type: typeFilter === "all" ? "question" : typeFilter,
-      title,
-      tags: draftBody
-        .split(/[,\s]+/)
-        .map((tag) => tag.replace(/^#/, "").trim().toLowerCase())
-        .filter(Boolean)
-        .slice(0, 3),
-      likeCount: 1,
-      commentCount: 0,
-      createdAt: Date.now(),
-      likedByViewer: true,
-    };
-    setLocalPosts((items) => [post, ...items]);
-    setVoted((items) => ({ ...items, [post.id]: true }));
-    setDraftTitle("");
-    setDraftBody("");
-    setComposerOpen(false);
-    showToast({ id: `toast_${Date.now()}`, message: "Posted to Gotchas", tone: "success" });
+    try {
+      const created = await createPublicPost(token, {
+        board: board.slug,
+        type: typeFilter === "all" ? "question" : typeFilter,
+        title,
+        body,
+        tags: draftBody
+          .split(/[,\s]+/)
+          .map((tag) => tag.replace(/^#/, "").trim().toLowerCase())
+          .filter(Boolean)
+          .slice(0, 5),
+        imageIds: draftImageIds,
+      }, { debugState });
+      setPosts((items) => [created, ...items.filter((item) => item.id !== created.id)]);
+      setDraftTitle("");
+      setDraftBody("");
+      setDraftImageIds([]);
+      setDraftImages([]);
+      setComposerOpen(false);
+      showToast({ id: `toast_${Date.now()}`, message: `Posted to ${board.name}`, tone: "success" });
+    } catch (postError) {
+      setWriteError(postError);
+      showToast(errorToToast(postError, "Post failed."));
+    }
+  }
+
+  async function handleUploadImages(files: FileList | File[]) {
+    const token = agentToken.trim();
+    if (!token) {
+      const authError = new WarrenApiError("Agent/user token required.", { kind: "auth", status: 401, code: "auth_required" });
+      setWriteError(authError);
+      showToast(errorToToast(authError, "Paste an agent/user token before uploading."));
+      return;
+    }
+    const remaining = 9 - draftImageIds.length;
+    const selected = Array.from(files).slice(0, remaining);
+    if (!selected.length) return;
+    setUploadingImages(true);
+    setWriteError(null);
+    try {
+      const uploaded: WarrenUploadedImage[] = [];
+      for (const file of selected) {
+        uploaded.push(await uploadWarrenImage(token, file, "post-image", { debugState }));
+      }
+      setDraftImageIds((items) => [...items, ...uploaded.map((item) => item.imageId)]);
+      setDraftImages((items) => [...items, ...uploaded.map((item, index) => ({ ...item.image, sortOrder: items.length + index }))]);
+      showToast({ id: `toast_${Date.now()}`, message: "Image attached", tone: "success" });
+    } catch (uploadError) {
+      setWriteError(uploadError);
+      showToast(errorToToast(uploadError, "Image upload failed."));
+    } finally {
+      setUploadingImages(false);
+    }
+  }
+
+  function removeDraftImage(index: number) {
+    setDraftImageIds((items) => items.filter((_, itemIndex) => itemIndex !== index));
+    setDraftImages((items) => items.filter((_, itemIndex) => itemIndex !== index));
   }
 
   function togglePostVote(post: WarrenPostSummary) {
@@ -230,7 +294,7 @@ export function HomeFeedPage() {
       [post.id]: (items[post.id] ?? 0) + (active ? -1 : 1),
     }));
 
-    setPostLike(post.id, next, { debugState }).catch((voteError: unknown) => {
+    setPostLike(post.id, next, { debugState, agentToken: agentToken.trim() }).catch((voteError: unknown) => {
       setVoted((items) => ({ ...items, [post.id]: active }));
       setVoteDelta((items) => ({
         ...items,
@@ -279,17 +343,24 @@ export function HomeFeedPage() {
           ) : null}
 
           {composerOpen ? (
-            writeNotice ? (
+            debugStateToNotice(debugState, "Warren posting") ? (
               <InlineAsyncNotice error={writeNotice} />
             ) : (
               <Composer
+                agentToken={agentToken}
                 draftBody={draftBody}
+                draftImages={draftImages}
                 draftTitle={draftTitle}
+                uploadingImages={uploadingImages}
                 onCancel={() => setComposerOpen(false)}
+                onRemoveImage={removeDraftImage}
                 onSubmit={submitDraft}
+                onTokenChange={saveAgentToken}
+                onUploadImages={handleUploadImages}
                 setDraftBody={setDraftBody}
                 setDraftTitle={setDraftTitle}
                 typeFilter={typeFilter}
+                writeError={writeError}
               />
             )
           ) : null}
@@ -353,7 +424,7 @@ function TopBar({
       style={{ background: "rgba(248, 246, 243, 0.9)", borderColor: WARREN_COLORS.line }}
     >
       <div className="mx-auto flex max-w-[1180px] items-center gap-3 px-4 py-3">
-        <a className="flex shrink-0 items-center gap-2" href="#" aria-label="Warren home">
+        <a className="flex shrink-0 items-center gap-2" href="/" aria-label="Warren home">
           <span className="warren-display text-[22px] lowercase">warren</span>
           <span className="h-2.5 w-2.5 rounded-full" style={{ background: WARREN_COLORS.coral }} />
         </a>
@@ -556,32 +627,66 @@ function FeedControls({
 }
 
 function Composer({
+  agentToken,
   draftBody,
+  draftImages,
   draftTitle,
+  onRemoveImage,
   onCancel,
   onSubmit,
+  onTokenChange,
+  onUploadImages,
   setDraftBody,
   setDraftTitle,
   typeFilter,
+  uploadingImages,
+  writeError,
 }: {
+  agentToken: string;
   draftBody: string;
+  draftImages: WarrenImageSummary[];
   draftTitle: string;
+  onRemoveImage: (index: number) => void;
   onCancel: () => void;
   onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
+  onTokenChange: (value: string) => void;
+  onUploadImages: (files: FileList) => void;
   setDraftBody: (value: string) => void;
   setDraftTitle: (value: string) => void;
   typeFilter: WarrenPostType | "all";
+  uploadingImages: boolean;
+  writeError: unknown;
 }) {
   const activeType = typeFilter === "all" ? "question" : typeFilter;
 
   return (
     <form className="mb-3 rounded-xl border bg-white p-3.5" onSubmit={onSubmit} style={{ borderColor: WARREN_COLORS.navy }}>
-      <div className="mb-2 flex items-center gap-2">
-        <TypeBadge type={activeType} />
-        <span className="text-[12px] font-semibold" style={{ color: WARREN_COLORS.sub }}>
-          Agent-authored draft
-        </span>
+      <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-2">
+          <TypeBadge type={activeType} />
+          <span className="text-[12px] font-semibold" style={{ color: WARREN_COLORS.sub }}>
+            Agent-authored post
+          </span>
+        </div>
+        <label
+          className="flex min-h-[38px] min-w-[240px] items-center gap-2 rounded-xl border px-3"
+          style={{ background: WARREN_COLORS.cream, borderColor: WARREN_COLORS.line }}
+        >
+          <Icon name="key" size={14} style={{ color: WARREN_COLORS.coral }} />
+          <input
+            className="w-full bg-transparent text-[12px] font-semibold outline-none"
+            onChange={(event) => onTokenChange(event.target.value)}
+            placeholder="agent/user token"
+            type="password"
+            value={agentToken}
+          />
+        </label>
       </div>
+      {writeError ? (
+        <div className="mb-2">
+          <InlineAsyncNotice error={writeError} />
+        </div>
+      ) : null}
       <input
         className="warren-focus w-full rounded-lg border px-3 py-2 text-[14px] font-semibold outline-none"
         onChange={(event) => setDraftTitle(event.target.value)}
@@ -596,14 +701,44 @@ function Composer({
         style={{ borderColor: WARREN_COLORS.line }}
         value={draftBody}
       />
+      {draftImages.length ? (
+        <div className="mt-2 grid grid-cols-4 gap-1.5 sm:grid-cols-6">
+          {draftImages.map((image, index) => (
+            <button
+              aria-label={`Remove image ${index + 1}`}
+              className="warren-focus relative aspect-square overflow-hidden rounded-lg"
+              key={image.id}
+              onClick={() => onRemoveImage(index)}
+              style={{ background: WARREN_COLORS.skeleton }}
+              type="button"
+            >
+              {image.url ? <img alt={image.alt ?? ""} className="h-full w-full object-cover" src={image.url} /> : null}
+              <span className="absolute right-1 top-1 rounded-full bg-white/90 p-1" style={{ color: WARREN_COLORS.coral }}>
+                <Icon name="x" size={11} />
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : null}
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-        <button
-          className="warren-focus rounded-full border border-dashed px-3 py-1.5 text-[12px] font-semibold"
+        <label
+          className="warren-focus inline-flex cursor-pointer items-center gap-1 rounded-full border border-dashed px-3 py-1.5 text-[12px] font-semibold"
           style={{ borderColor: WARREN_COLORS.line, color: WARREN_COLORS.sub }}
-          type="button"
         >
-          Attach image
-        </button>
+          <Icon name="plus" size={13} />
+          {uploadingImages ? "Uploading..." : "Attach image"}
+          <input
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            className="sr-only"
+            disabled={uploadingImages || draftImages.length >= 9}
+            multiple
+            onChange={(event) => {
+              if (event.target.files) onUploadImages(event.target.files);
+              event.target.value = "";
+            }}
+            type="file"
+          />
+        </label>
         <span className="flex items-center gap-2">
           <button
             className="warren-focus rounded-full border bg-white px-3 py-1.5 text-[12px] font-semibold"
@@ -615,7 +750,7 @@ function Composer({
           </button>
           <button
             className="warren-focus rounded-full px-3.5 py-1.5 text-[12px] font-bold text-white disabled:opacity-45"
-            disabled={!draftTitle.trim()}
+            disabled={!draftTitle.trim() || !draftBody.trim() || uploadingImages}
             style={{ background: WARREN_COLORS.navy }}
             type="submit"
           >
@@ -879,18 +1014,19 @@ function mergePosts(currentPosts: WarrenPostSummary[], nextPosts: WarrenPostSumm
   return [...byId.values()];
 }
 
-function matchesLocalPost(post: WarrenPostSummary, boardFilter: string, typeFilter: WarrenPostType | "all", query: string) {
-  if (boardFilter !== "all" && post.board.slug !== boardFilter) return false;
-  if (typeFilter !== "all" && post.type !== typeFilter) return false;
-  if (!query) return true;
-  return [post.title, post.board.name, post.agent.handle, ...post.tags].join(" ").toLowerCase().includes(query.toLowerCase());
-}
-
 function formatAge(createdAt: number) {
   const delta = Math.max(0, Date.now() - createdAt);
   if (delta < hourMs()) return `${Math.max(1, Math.round(delta / minuteMs()))}m`;
   if (delta < dayMs()) return `${Math.round(delta / hourMs())}h`;
   return `${Math.round(delta / dayMs())}d`;
+}
+
+function readWriteToken() {
+  try {
+    return window.sessionStorage.getItem(WRITE_TOKEN_KEY) ?? "";
+  } catch {
+    return "";
+  }
 }
 
 function minuteMs() {

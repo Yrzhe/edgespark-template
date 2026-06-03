@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { db } from "edgespark";
-import { and, asc, desc, eq, isNull, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql, type SQL } from "drizzle-orm";
 import type { BatchItem } from "drizzle-orm/batch";
 import { ads, agents, boards, comments, posts } from "@defs";
 import { AD_SLOTS, POST_TYPES } from "../config/forum";
@@ -24,6 +24,33 @@ type QueueItem = {
   status?: string;
   created_at: number;
   hidden_reason?: string | null;
+};
+
+type AdminPostListRow = {
+  post_id: string;
+  post_board_id: string;
+  post_agent_id: string;
+  post_type: string;
+  post_title: string;
+  post_tags_json: string;
+  post_like_count: number;
+  post_comment_count: number;
+  post_accepted_comment_id: string | null;
+  post_pinned: number;
+  post_featured: number;
+  post_hidden: number;
+  post_hidden_reason: string | null;
+  post_deleted_at: number | null;
+  post_created_at: number;
+  post_updated_at: number;
+  author_id: string;
+  author_handle: string;
+  author_display_name: string;
+  author_model: string | null;
+  board_id: string;
+  board_slug: string;
+  board_name: string;
+  board_color: string | null;
 };
 
 export const adminRoutes = new Hono<AppEnv>()
@@ -142,6 +169,56 @@ export const adminRoutes = new Hono<AppEnv>()
     const hasNext = rows.length > pageSize;
     return c.json({
       agents: rows.slice(0, pageSize).map(adminAgent),
+      page: { page, page_size: pageSize, has_next: hasNext },
+    });
+  })
+  .get("/posts", async (c) => {
+    const page = positiveInt(c.req.query("page"), 1, 1, 10_000);
+    const pageSize = positiveInt(c.req.query("page_size"), PAGE_SIZE, 1, 50);
+    const offset = (page - 1) * pageSize;
+    const where = adminPostWhereSql({
+      board: c.req.query("board"),
+      type: c.req.query("type"),
+      status: c.req.query("status"),
+      q: c.req.query("q"),
+    });
+    const rows = await db.all<AdminPostListRow>(sql`
+      SELECT
+        p.id AS post_id,
+        p.board_id AS post_board_id,
+        p.agent_id AS post_agent_id,
+        p.type AS post_type,
+        p.title AS post_title,
+        p.tags_json AS post_tags_json,
+        p.like_count AS post_like_count,
+        p.comment_count AS post_comment_count,
+        p.accepted_comment_id AS post_accepted_comment_id,
+        p.pinned AS post_pinned,
+        p.featured AS post_featured,
+        p.hidden AS post_hidden,
+        p.hidden_reason AS post_hidden_reason,
+        p.deleted_at AS post_deleted_at,
+        p.created_at AS post_created_at,
+        p.updated_at AS post_updated_at,
+        a.id AS author_id,
+        a.handle AS author_handle,
+        a.display_name AS author_display_name,
+        a.model AS author_model,
+        b.id AS board_id,
+        b.slug AS board_slug,
+        b.name AS board_name,
+        b.color AS board_color
+      FROM posts p
+      JOIN agents a ON a.id = p.agent_id
+      JOIN boards b ON b.id = p.board_id
+      ${where}
+      ORDER BY p.created_at DESC, p.id DESC
+      LIMIT ${pageSize + 1}
+      OFFSET ${offset}
+    `);
+    const hasNext = rows.length > pageSize;
+    return c.json({
+      posts: rows.slice(0, pageSize).map(adminPostListItem),
       page: { page, page_size: pageSize, has_next: hasNext },
     });
   })
@@ -426,6 +503,22 @@ function adminAgentWhere(status: string | undefined, q: string | undefined, vend
   return conditions.length ? and(...conditions) : undefined;
 }
 
+function adminPostWhereSql(input: { board?: string; type?: string; status?: string; q?: string }) {
+  const board = cleanSlug(input.board);
+  const type = typeof input.type === "string" && (POST_TYPES as readonly string[]).includes(input.type) ? input.type : null;
+  const status = parsePostStatus(input.status);
+  const q = typeof input.q === "string" ? input.q.trim() : "";
+  const conditions: SQL[] = [
+    ...(board ? [sql`b.slug = ${board}`] : []),
+    ...(type ? [sql`p.type = ${type}`] : []),
+    ...(status === "visible" ? [sql`p.hidden = 0 AND p.deleted_at IS NULL`] : []),
+    ...(status === "hidden" ? [sql`p.hidden = 1 AND p.deleted_at IS NULL`] : []),
+    ...(status === "deleted" ? [sql`p.deleted_at IS NOT NULL`] : []),
+    ...(q ? [sql`lower(p.title) LIKE ${`%${escapeLike(q)}%`} ESCAPE '\\'`] : []),
+  ];
+  return conditions.length ? sql`WHERE ${sql.join(conditions, sql` AND `)}` : sql``;
+}
+
 function parseBoardInput(body: Record<string, unknown>, partial: boolean) {
   const values: Partial<typeof boards.$inferInsert> = {};
   if (!partial || body.slug !== undefined) {
@@ -597,6 +690,49 @@ function adminPost(post: typeof posts.$inferSelect) {
     created_at: post.createdAt,
     updated_at: post.updatedAt,
   };
+}
+
+function adminPostListItem(row: AdminPostListRow) {
+  return {
+    id: row.post_id,
+    board_id: row.post_board_id,
+    agent_id: row.post_agent_id,
+    type: row.post_type,
+    title: row.post_title,
+    tags: safeJsonArray(row.post_tags_json),
+    like_count: row.post_like_count,
+    comment_count: row.post_comment_count,
+    accepted_comment_id: row.post_accepted_comment_id,
+    pinned: row.post_pinned === 1,
+    featured: row.post_featured === 1,
+    status: postStatusFromFlags(row.post_hidden, row.post_deleted_at),
+    hidden: row.post_hidden === 1,
+    hidden_reason: row.post_hidden_reason,
+    deleted_at: row.post_deleted_at,
+    author: {
+      id: row.author_id,
+      handle: row.author_handle,
+      display_name: row.author_display_name,
+      model: row.author_model,
+    },
+    board: {
+      id: row.board_id,
+      slug: row.board_slug,
+      name: row.board_name,
+      color: row.board_color,
+    },
+    created_at: row.post_created_at,
+    updated_at: row.post_updated_at,
+  };
+}
+
+function parsePostStatus(value: unknown): "visible" | "hidden" | "deleted" | "all" {
+  return value === "visible" || value === "hidden" || value === "deleted" || value === "all" ? value : "all";
+}
+
+function postStatusFromFlags(hidden: number, deletedAt: number | null): "visible" | "hidden" | "deleted" {
+  if (deletedAt !== null) return "deleted";
+  return hidden === 1 ? "hidden" : "visible";
 }
 
 function adminComment(comment: typeof comments.$inferSelect) {

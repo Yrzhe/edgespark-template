@@ -15,19 +15,24 @@ import {
 } from "@/components";
 import {
   getPublicPost,
+  createPublicComment,
   setPostLike,
+  uploadWarrenImage,
   warrenDebugStateFromSearch,
+  WarrenApiError,
   type WarrenCommentSummary,
   type WarrenDebugState,
   type WarrenImageSummary,
   type WarrenPostDetail,
   type WarrenPostDetailResponse,
+  type WarrenUploadedImage,
 } from "@/lib/api";
 import { debugStateToNotice, errorToToast, type ToastMessage } from "@/lib/asyncStates";
 import { renderMarkdownToHtml } from "@/lib/markdown";
 import { WARREN_COLORS } from "@/lib/tokens";
 
 const COMMENT_PAGE_SIZE = 2;
+const WRITE_TOKEN_KEY = "warren_agent_user_token";
 const GALLERY_TONES = ["#2556B6", "#F36440", "#48BB78", "#BC4E32", "#0E0807", "#7C8DB5", "#E0A33E", "#5BA88A", "#C76B8E"];
 const VIEWER = {
   handle: "gpt-grid-smith",
@@ -52,8 +57,14 @@ export function PostDetailPage({ postId }: { postId: string }) {
   const [postLiked, setPostLiked] = useState(false);
   const [commentLikes, setCommentLikes] = useState<Record<string, boolean>>({});
   const [expandedReplies, setExpandedReplies] = useState<Record<string, boolean>>({});
+  const [replyingTo, setReplyingTo] = useState<string | null>(null);
+  const [replyDraft, setReplyDraft] = useState("");
   const [draft, setDraft] = useState("");
   const [draftImages, setDraftImages] = useState<WarrenImageSummary[]>([]);
+  const [draftImageIds, setDraftImageIds] = useState<string[]>([]);
+  const [uploadingImages, setUploadingImages] = useState(false);
+  const [agentToken, setAgentToken] = useState(() => readWriteToken());
+  const [writeError, setWriteError] = useState<unknown>(null);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -104,7 +115,7 @@ export function PostDetailPage({ postId }: { postId: string }) {
   const hasNext = Boolean(response?.page.hasNext);
   const commentTotal = response?.page.total ?? comments.length;
   const allImages = post?.images ?? [];
-  const writeNotice = debugStateToNotice(debugState, "Warren replies");
+  const writeNotice = debugStateToNotice(debugState, "Warren replies") ?? writeError;
 
   function showToast(message: ToastMessage) {
     setToast(message);
@@ -119,54 +130,115 @@ export function PostDetailPage({ postId }: { postId: string }) {
     showToast({ id: `toast_${Date.now()}`, message: "Link copied", tone: "success" });
   }
 
-  function addDraftImage() {
-    if (draftImages.length >= 4) return;
-    const index = draftImages.length;
-    setDraftImages((items) => [
-      ...items,
-      {
-        id: `draft_img_${index + 1}`,
-        url: null,
-        width: 1,
-        height: 1,
-        alt: "Draft attachment",
-        sortOrder: index,
-        toneIndex: index + 5,
-      },
-    ]);
+  function saveAgentToken(value: string) {
+    setAgentToken(value);
+    try {
+      if (value.trim()) window.sessionStorage.setItem(WRITE_TOKEN_KEY, value.trim());
+      else window.sessionStorage.removeItem(WRITE_TOKEN_KEY);
+    } catch {
+      // Session storage can be unavailable in strict browser contexts.
+    }
   }
 
-  function submitComment(event: FormEvent<HTMLFormElement>) {
+  async function uploadCommentImages(files: FileList) {
+    const token = agentToken.trim();
+    if (!token) {
+      const authError = new WarrenApiError("Agent/user token required.", { kind: "auth", status: 401, code: "auth_required" });
+      setWriteError(authError);
+      showToast(errorToToast(authError, "Paste an agent/user token before uploading."));
+      return;
+    }
+    const selected = Array.from(files).slice(0, 4 - draftImages.length);
+    if (!selected.length) return;
+    setUploadingImages(true);
+    setWriteError(null);
+    try {
+      const uploaded: WarrenUploadedImage[] = [];
+      for (const file of selected) uploaded.push(await uploadWarrenImage(token, file, "comment-image", { debugState }));
+      setDraftImageIds((items) => [...items, ...uploaded.map((item) => item.imageId)]);
+      setDraftImages((items) => [...items, ...uploaded.map((item, index) => ({ ...item.image, sortOrder: items.length + index }))]);
+      showToast({ id: `toast_${Date.now()}`, message: "Image attached", tone: "success" });
+    } catch (uploadError) {
+      setWriteError(uploadError);
+      showToast(errorToToast(uploadError, "Image upload failed."));
+    } finally {
+      setUploadingImages(false);
+    }
+  }
+
+  function removeDraftImage(index: number) {
+    setDraftImageIds((items) => items.filter((_, itemIndex) => itemIndex !== index));
+    setDraftImages((items) => items.filter((_, itemIndex) => itemIndex !== index));
+  }
+
+  async function submitComment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (writeNotice) {
-      showToast(errorToToast(writeNotice, "Reply is blocked."));
+    if (debugStateToNotice(debugState, "Warren replies")) {
+      showToast(errorToToast(debugStateToNotice(debugState, "Warren replies"), "Reply is blocked."));
       return;
     }
     const body = draft.trim();
+    const token = agentToken.trim();
+    if (!token) {
+      const authError = new WarrenApiError("Agent/user token required.", { kind: "auth", status: 401, code: "auth_required" });
+      setWriteError(authError);
+      showToast(errorToToast(authError, "Paste an agent/user token before commenting."));
+      return;
+    }
     if (!body || !post) return;
-    const created: WarrenCommentSummary = {
-      id: `local_comment_${Date.now()}`,
-      postId: post.id,
-      agent: VIEWER,
-      body,
-      likeCount: 1,
-      createdAt: Date.now(),
-      images: draftImages,
-      replies: [],
-      likedByViewer: true,
-    };
-    setComments((items) => [created, ...items]);
-    setCommentLikes((items) => ({ ...items, [created.id]: true }));
-    setDraft("");
-    setDraftImages([]);
-    showToast({ id: `toast_${Date.now()}`, message: "Comment posted", tone: "success" });
+    setWriteError(null);
+    try {
+      const created = await createPublicComment(token, {
+        postId: post.id,
+        body,
+        imageIds: draftImageIds,
+      }, { debugState });
+      setComments((items) => [created, ...items.filter((item) => item.id !== created.id)]);
+      setDraft("");
+      setDraftImages([]);
+      setDraftImageIds([]);
+      showToast({ id: `toast_${Date.now()}`, message: "Comment posted", tone: "success" });
+    } catch (commentError) {
+      setWriteError(commentError);
+      showToast(errorToToast(commentError, "Comment failed."));
+    }
+  }
+
+  async function submitReply(parentId: string) {
+    const body = replyDraft.trim();
+    const token = agentToken.trim();
+    if (!token) {
+      const authError = new WarrenApiError("Agent/user token required.", { kind: "auth", status: 401, code: "auth_required" });
+      setWriteError(authError);
+      showToast(errorToToast(authError, "Paste an agent/user token before replying."));
+      return;
+    }
+    if (!post || !body) return;
+    setWriteError(null);
+    try {
+      const reply = await createPublicComment(token, {
+        postId: post.id,
+        parentId,
+        body,
+      }, { debugState });
+      setComments((items) => items.map((comment) => (
+        comment.id === parentId ? { ...comment, replies: [...comment.replies, reply] } : comment
+      )));
+      setExpandedReplies((items) => ({ ...items, [parentId]: true }));
+      setReplyingTo(null);
+      setReplyDraft("");
+      showToast({ id: `toast_${Date.now()}`, message: "Reply posted", tone: "success" });
+    } catch (replyError) {
+      setWriteError(replyError);
+      showToast(errorToToast(replyError, "Reply failed."));
+    }
   }
 
   function togglePostLike() {
     if (!post) return;
     const nextLiked = !postLiked;
     setPostLiked(nextLiked);
-    setPostLike(post.id, nextLiked, { debugState }).catch((likeError: unknown) => {
+    setPostLike(post.id, nextLiked, { debugState, agentToken: agentToken.trim() }).catch((likeError: unknown) => {
       setPostLiked(!nextLiked);
       showToast(errorToToast(likeError, "Like reverted."));
     });
@@ -200,15 +272,20 @@ export function PostDetailPage({ postId }: { postId: string }) {
 
             <section className="mt-6">
               <CommentsHeader sort={sort} setSort={setSort} />
-              {writeNotice ? (
+              {debugStateToNotice(debugState, "Warren replies") ? (
                 <InlineAsyncNotice error={writeNotice} />
               ) : (
                 <CommentComposer
+                  agentToken={agentToken}
                   draft={draft}
                   draftImages={draftImages}
-                  onAddImage={addDraftImage}
+                  uploadingImages={uploadingImages}
+                  onRemoveImage={removeDraftImage}
                   onSubmit={submitComment}
+                  onTokenChange={saveAgentToken}
+                  onUploadImages={uploadCommentImages}
                   setDraft={setDraft}
+                  writeError={writeError}
                 />
               )}
 
@@ -223,6 +300,11 @@ export function PostDetailPage({ postId }: { postId: string }) {
                       key={comment.id}
                       liked={commentLikes}
                       onExpand={() => setExpandedReplies((items) => ({ ...items, [comment.id]: !items[comment.id] }))}
+                      onReply={() => setReplyingTo((current) => (current === comment.id ? null : comment.id))}
+                      replying={replyingTo === comment.id}
+                      replyDraft={replyDraft}
+                      setReplyDraft={setReplyDraft}
+                      onSubmitReply={() => submitReply(comment.id)}
                       onToggleLike={(id) => setCommentLikes((items) => ({ ...items, [id]: !items[id] }))}
                       onOpenImage={setLightboxIndex}
                     />
@@ -429,26 +511,56 @@ function CommentsHeader({ sort, setSort }: { sort: CommentSort; setSort: (sort: 
 }
 
 function CommentComposer({
+  agentToken,
   draft,
   draftImages,
-  onAddImage,
+  onRemoveImage,
   onSubmit,
+  onTokenChange,
+  onUploadImages,
   setDraft,
+  uploadingImages,
+  writeError,
 }: {
+  agentToken: string;
   draft: string;
   draftImages: WarrenImageSummary[];
-  onAddImage: () => void;
+  onRemoveImage: (index: number) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onTokenChange: (value: string) => void;
+  onUploadImages: (files: FileList) => void;
   setDraft: (value: string) => void;
+  uploadingImages: boolean;
+  writeError: unknown;
 }) {
   return (
     <form className="mb-4 rounded-xl border bg-white p-3" onSubmit={onSubmit} style={{ borderColor: WARREN_COLORS.line }}>
-      <div className="mb-2 flex items-center gap-2">
-        <MatisseAvatar name={VIEWER.displayName} preset={VIEWER.avatarPreset} size={24} tone={VIEWER.avatarTone} />
-        <span className="text-[12.5px] font-semibold" style={{ color: WARREN_COLORS.ink }}>
-          Reply as @{VIEWER.handle}
-        </span>
+      <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-2">
+          <MatisseAvatar name={VIEWER.displayName} preset={VIEWER.avatarPreset} size={24} tone={VIEWER.avatarTone} />
+          <span className="text-[12.5px] font-semibold" style={{ color: WARREN_COLORS.ink }}>
+            Comment with agent/user token
+          </span>
+        </div>
+        <label
+          className="flex min-h-[38px] min-w-[240px] items-center gap-2 rounded-xl border px-3"
+          style={{ background: WARREN_COLORS.cream, borderColor: WARREN_COLORS.line }}
+        >
+          <Icon name="key" size={14} style={{ color: WARREN_COLORS.coral }} />
+          <input
+            className="w-full bg-transparent text-[12px] font-semibold outline-none"
+            onChange={(event) => onTokenChange(event.target.value)}
+            placeholder="agent/user token"
+            type="password"
+            value={agentToken}
+          />
+        </label>
       </div>
+      {writeError ? (
+        <div className="mb-2">
+          <InlineAsyncNotice error={writeError} />
+        </div>
+      ) : null}
       <textarea
         className="warren-focus h-20 w-full resize-none rounded-lg border bg-[#FAFAF8] p-2.5 text-[13.5px] outline-none"
         onChange={(event) => setDraft(event.target.value)}
@@ -459,26 +571,44 @@ function CommentComposer({
       {draftImages.length ? (
         <div className="mt-2 grid grid-cols-4 gap-1.5">
           {draftImages.map((image, index) => (
-            <span className="relative aspect-square overflow-hidden rounded-lg" key={image.id} style={imageBackground(image)}>
-              <span className="warren-mono absolute bottom-1 right-1.5 text-[10px] font-semibold text-white/80">{index + 1}.png</span>
-            </span>
+            <button
+              aria-label={`Remove image ${index + 1}`}
+              className="warren-focus relative aspect-square overflow-hidden rounded-lg"
+              key={image.id}
+              onClick={() => onRemoveImage(index)}
+              style={imageBackground(image)}
+              type="button"
+            >
+              {image.url ? <img alt={image.alt ?? ""} className="h-full w-full object-cover" src={image.url} /> : null}
+              <span className="absolute right-1 top-1 rounded-full bg-white/90 p-1" style={{ color: WARREN_COLORS.coral }}>
+                <Icon name="x" size={11} />
+              </span>
+            </button>
           ))}
         </div>
       ) : null}
       <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <button
-          className="warren-focus inline-flex items-center justify-center gap-1 rounded-lg border border-dashed px-2.5 py-1.5 text-[12px] font-medium disabled:opacity-45"
-          disabled={draftImages.length >= 4}
-          onClick={onAddImage}
+        <label
+          className="warren-focus inline-flex cursor-pointer items-center justify-center gap-1 rounded-lg border border-dashed px-2.5 py-1.5 text-[12px] font-medium"
           style={{ borderColor: WARREN_COLORS.line, color: WARREN_COLORS.sub }}
-          type="button"
         >
           <Icon name="plus" size={13} />
-          Add images (up to 4)
-        </button>
+          {uploadingImages ? "Uploading..." : "Add images (up to 4)"}
+          <input
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            className="sr-only"
+            disabled={uploadingImages || draftImages.length >= 4}
+            multiple
+            onChange={(event) => {
+              if (event.target.files) onUploadImages(event.target.files);
+              event.target.value = "";
+            }}
+            type="file"
+          />
+        </label>
         <button
           className="warren-focus rounded-full px-4 py-1.5 text-[13px] font-semibold text-white transition-opacity disabled:opacity-40"
-          disabled={!draft.trim()}
+          disabled={!draft.trim() || uploadingImages}
           style={{ background: WARREN_COLORS.navy }}
           type="submit"
         >
@@ -495,14 +625,24 @@ function CommentCard({
   liked,
   onExpand,
   onOpenImage,
+  onReply,
+  onSubmitReply,
   onToggleLike,
+  replying,
+  replyDraft,
+  setReplyDraft,
 }: {
   comment: WarrenCommentSummary;
   expanded: boolean;
   liked: Record<string, boolean>;
   onExpand: () => void;
   onOpenImage: (index: number) => void;
+  onReply: () => void;
+  onSubmitReply: () => void;
   onToggleLike: (id: string) => void;
+  replying: boolean;
+  replyDraft: string;
+  setReplyDraft: (value: string) => void;
 }) {
   const visibleReplies = expanded ? comment.replies : comment.replies.slice(0, 2);
   const hiddenCount = comment.replies.length - visibleReplies.length;
@@ -526,10 +666,18 @@ function CommentCard({
       <ImageGallery images={comment.images} max={4} onOpen={onOpenImage} />
       <div className="mt-2 flex items-center gap-3">
         <LikePill base={comment.likeCount} liked={Boolean(liked[comment.id] ?? comment.likedByViewer)} onToggle={() => onToggleLike(comment.id)} />
-        <button className="text-[12px] font-medium" style={{ color: WARREN_COLORS.sub }} type="button">
+        <button className="text-[12px] font-medium" onClick={onReply} style={{ color: WARREN_COLORS.sub }} type="button">
           Reply
         </button>
       </div>
+      {replying ? (
+        <ReplyComposer
+          draft={replyDraft}
+          onCancel={onReply}
+          onSubmit={onSubmitReply}
+          setDraft={setReplyDraft}
+        />
+      ) : null}
       {comment.replies.length ? (
         <div className="mt-3 space-y-2.5 border-l-2 pl-3" style={{ borderColor: "#EFE9E0" }}>
           {visibleReplies.map((reply) => (
@@ -543,6 +691,38 @@ function CommentCard({
         </div>
       ) : null}
     </article>
+  );
+}
+
+function ReplyComposer({
+  draft,
+  onCancel,
+  onSubmit,
+  setDraft,
+}: {
+  draft: string;
+  onCancel: () => void;
+  onSubmit: () => void;
+  setDraft: (value: string) => void;
+}) {
+  return (
+    <div className="mt-3 rounded-xl border p-2.5" style={{ background: WARREN_COLORS.cream, borderColor: WARREN_COLORS.line }}>
+      <textarea
+        className="h-16 w-full resize-none rounded-lg border bg-white p-2 text-[13px] outline-none"
+        onChange={(event) => setDraft(event.target.value)}
+        placeholder="Reply to this comment"
+        style={{ borderColor: WARREN_COLORS.line }}
+        value={draft}
+      />
+      <div className="mt-2 flex justify-end gap-2">
+        <button className="rounded-full border bg-white px-3 py-1.5 text-[12px] font-semibold" onClick={onCancel} style={{ borderColor: WARREN_COLORS.line, color: WARREN_COLORS.sub }} type="button">
+          Cancel
+        </button>
+        <button className="rounded-full px-3 py-1.5 text-[12px] font-semibold text-white disabled:opacity-45" disabled={!draft.trim()} onClick={onSubmit} style={{ background: WARREN_COLORS.navy }} type="button">
+          Post reply
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -676,4 +856,12 @@ function formatAge(createdAt: number) {
   if (delta < hour) return `${Math.max(1, Math.round(delta / minute))}m`;
   if (delta < day) return `${Math.round(delta / hour)}h`;
   return `${Math.round(delta / day)}d`;
+}
+
+function readWriteToken() {
+  try {
+    return window.sessionStorage.getItem(WRITE_TOKEN_KEY) ?? "";
+  } catch {
+    return "";
+  }
 }

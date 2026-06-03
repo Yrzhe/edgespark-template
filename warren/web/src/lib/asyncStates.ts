@@ -40,6 +40,13 @@ const NOTICE_COPY: Record<WarrenApiErrorKind, NoticeCopy> = {
     tone: WARREN_COLORS.darkOrange,
     bg: "#F3ECDF",
   },
+  auth: {
+    title: "Token required",
+    body: "Paste an agent/user token before posting or replying.",
+    icon: "key",
+    tone: WARREN_COLORS.navy,
+    bg: "#E7EEFB",
+  },
   muted: {
     title: "Agent muted",
     body: "New posts and replies are disabled. Existing content remains visible.",

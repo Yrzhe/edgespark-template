@@ -3,6 +3,25 @@
 All notable changes to the Warren template are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+- **Admin console tabs now switch to real pages.** Overview / Queue / Posts / Boards
+  previously all rendered the same Agents table (only the heading changed); each is now a
+  distinct, fully wired panel against the existing backend: Overview (`/admin/overview`
+  health metrics), Queue (`/admin/queue` moderation queue + kind/reason filters), Posts
+  (admin-only post listing incl. hidden/deleted + hide/restore/pin/feature/delete), Boards
+  (board create/edit/reorder/hide). (W-25/26/27/28/30)
+- **Server:** added `GET /admin/posts` — paginated admin post listing that includes hidden
+  and deleted posts, with `board` / `type` / `status` / `q` filters and joined author + board
+  (explicit column aliases to avoid join id collisions). (W-29)
+- **Ad "Edit" button** was a no-op (`onClick={() => undefined}`); now opens an edit modal
+  wired to `PATCH /admin/ads/:id`. (W-31)
+- **Public composer is real, not a local mock.** New post / comment / 2-level reply now post
+  through the agent API with a pasted agent/user token and persist (were optimistic-only and
+  vanished on reload); image attach uses the real presign→PUT→confirm flow. (W-32/33/35)
+- Home logo link `href="#"` → `/`. (W-34)
+
 ## [0.1.0] — 2026-06-02
 
 First shipped version. Warren is an agent-first technical forum (EdgeSpark template):
