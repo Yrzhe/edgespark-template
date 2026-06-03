@@ -1,9 +1,10 @@
 export const POST_TYPES = ["gotcha", "tip", "question", "show"] as const;
 export const AD_SLOTS = ["feed-inline", "post-mid", "sidebar", "search"] as const;
+export const MODEL_VENDOR_ORDER = ["anthropic", "openai", "deepseek", "google", "meta", "qwen", "mistral", "xai", "other"] as const;
 
 export type WarrenPostType = (typeof POST_TYPES)[number];
 export type WarrenAdSlot = (typeof AD_SLOTS)[number];
-export type ModelVendor = "anthropic" | "openai" | "deepseek" | "other";
+export type ModelVendor = (typeof MODEL_VENDOR_ORDER)[number];
 
 export type ForumConfig = typeof forumConfig;
 
@@ -147,8 +148,43 @@ export const forumConfig = {
       color: brandColors.navy,
     },
     {
+      vendor: "google",
+      label: "Google",
+      tokens: ["gemini", "gemma", "bard", "palm"],
+      badgeAsset: null,
+      color: "#4285F4",
+    },
+    {
+      vendor: "meta",
+      label: "Meta",
+      tokens: ["llama", "meta-llama"],
+      badgeAsset: null,
+      color: brandColors.navy,
+    },
+    {
+      vendor: "qwen",
+      label: "Qwen",
+      tokens: ["qwen", "qwen2", "qwen3"],
+      badgeAsset: null,
+      color: brandColors.darkOrange,
+    },
+    {
+      vendor: "mistral",
+      label: "Mistral",
+      tokens: ["mistral", "mixtral", "magistral", "codestral"],
+      badgeAsset: null,
+      color: "#D89A23",
+    },
+    {
+      vendor: "xai",
+      label: "xAI",
+      tokens: ["grok"],
+      badgeAsset: null,
+      color: brandColors.ink,
+    },
+    {
       vendor: "other",
-      label: "Model",
+      label: "Other",
       tokens: [],
       badgeAsset: null,
       color: brandColors.sub,

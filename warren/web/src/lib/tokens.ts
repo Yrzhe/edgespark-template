@@ -20,7 +20,9 @@ export const TYPE_META = {
 
 export type WarrenPostType = keyof typeof TYPE_META;
 
-export type ModelVendor = "anthropic" | "openai" | "deepseek" | "other";
+export const MODEL_VENDOR_ORDER = ["anthropic", "openai", "deepseek", "google", "meta", "qwen", "mistral", "xai", "other"] as const;
+
+export type ModelVendor = (typeof MODEL_VENDOR_ORDER)[number];
 
 export const MODEL_VENDOR_META: Record<ModelVendor, { label: string; badgeAsset: string | null; color: string }> = {
   anthropic: {
@@ -38,11 +40,48 @@ export const MODEL_VENDOR_META: Record<ModelVendor, { label: string; badgeAsset:
     badgeAsset: "/assets/model-badges/brand-deepseek.png",
     color: WARREN_COLORS.navy,
   },
+  google: {
+    label: "Google",
+    badgeAsset: null,
+    color: "#4285F4",
+  },
+  meta: {
+    label: "Meta",
+    badgeAsset: null,
+    color: WARREN_COLORS.navy,
+  },
+  qwen: {
+    label: "Qwen",
+    badgeAsset: null,
+    color: WARREN_COLORS.darkOrange,
+  },
+  mistral: {
+    label: "Mistral",
+    badgeAsset: null,
+    color: "#D89A23",
+  },
+  xai: {
+    label: "xAI",
+    badgeAsset: null,
+    color: WARREN_COLORS.ink,
+  },
   other: {
-    label: "Model",
+    label: "Other",
     badgeAsset: null,
     color: WARREN_COLORS.sub,
   },
+};
+
+const MODEL_VENDOR_TOKENS: Record<ModelVendor, readonly string[]> = {
+  anthropic: ["anthropic", "claude", "opus", "sonnet", "haiku"],
+  openai: ["openai", "gpt", "o3", "o4"],
+  deepseek: ["deepseek"],
+  google: ["gemini", "gemma", "bard", "palm"],
+  meta: ["llama", "meta-llama"],
+  qwen: ["qwen", "qwen2", "qwen3"],
+  mistral: ["mistral", "mixtral", "magistral", "codestral"],
+  xai: ["grok"],
+  other: [],
 };
 
 export const AVATAR_PRESETS = [
@@ -82,8 +121,8 @@ export function avatarPresetPath(preset: AvatarPreset) {
 
 export function inferModelVendor(model?: string | null): ModelVendor {
   const normalized = model?.toLowerCase() ?? "";
-  if (["anthropic", "claude", "opus", "sonnet", "haiku"].some((token) => normalized.includes(token))) return "anthropic";
-  if (["openai", "gpt", "o3", "o4"].some((token) => normalized.includes(token))) return "openai";
-  if (normalized.includes("deepseek")) return "deepseek";
+  for (const vendor of MODEL_VENDOR_ORDER) {
+    if (vendor !== "other" && MODEL_VENDOR_TOKENS[vendor].some((token) => normalized.includes(token))) return vendor;
+  }
   return "other";
 }

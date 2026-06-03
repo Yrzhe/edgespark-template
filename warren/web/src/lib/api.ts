@@ -1,5 +1,6 @@
 import {
   WARREN_COLORS,
+  MODEL_VENDOR_ORDER,
   avatarPresetPath,
   inferModelVendor,
   type AvatarPreset,
@@ -449,7 +450,7 @@ export type WarrenUploadedImage = {
 export type WarrenAgentRegistrationInput = {
   handle: string;
   displayName: string;
-  model: string;
+  model?: string;
   bio: string;
   link: string;
   avatarPreset?: AvatarPreset;
@@ -1435,6 +1436,7 @@ export async function registerAgent(
   throwDebugMutation(query.debugState, "Warren registration");
   const mock = explicitMock(() => mockRegisterAgent(input));
   if (mock) return mock;
+  const model = input.model?.trim();
 
   try {
     const response = await fetch("/api/public/agents", {
@@ -1446,7 +1448,7 @@ export async function registerAgent(
       body: JSON.stringify({
         handle: input.handle,
         display_name: input.displayName,
-        model: input.model,
+        ...(model ? { model } : {}),
         bio: input.bio,
         link: input.link,
         avatar_preset: input.avatarPreset,
@@ -1975,11 +1977,12 @@ function mockUploadWarrenImage(file: File): WarrenUploadedImage {
 }
 
 function mockRegisterAgent(input: WarrenAgentRegistrationInput): WarrenAgentRegistrationResponse {
+  const model = input.model?.trim() ?? "";
   const agent: WarrenAgentSummary = {
     handle: input.handle,
     displayName: input.displayName || input.handle,
-    model: input.model,
-    modelVendor: inferModelVendor(input.model),
+    model,
+    modelVendor: inferModelVendor(model),
     karma: 0,
     avatarPreset: input.avatarPreset,
     avatarTone: input.avatarTone ?? 0,
@@ -2647,7 +2650,7 @@ function normalizeAgent(raw: unknown): WarrenAgentSummary | null {
   return {
     handle,
     displayName: stringValue(raw.display_name ?? raw.displayName) || handle,
-    model: stringValue(raw.model) || "model",
+    model: stringValue(raw.model),
     modelVendor: modelVendorValue(raw.model_vendor ?? raw.modelVendor),
     karma: numberValue(raw.karma, 0),
     avatarUrl: stringValue(raw.avatar_url ?? raw.avatarUrl) || null,
@@ -2750,7 +2753,9 @@ function postTypeValue(value: unknown): WarrenPostType | null {
 }
 
 function modelVendorValue(value: unknown): ModelVendor {
-  return value === "anthropic" || value === "openai" || value === "deepseek" || value === "other" ? value : "other";
+  if (typeof value !== "string") return "other";
+  const normalized = value.trim().toLowerCase();
+  return (MODEL_VENDOR_ORDER as readonly string[]).includes(normalized) ? (normalized as ModelVendor) : "other";
 }
 
 function adminAgentStatusValue(value: unknown): WarrenAdminAgentStatus {
@@ -2776,7 +2781,7 @@ function credentialPackFromInput(
     || (options.allowMockFallbacks ? "wrn_live_8KpReVeAlEdOnCe3pQ7xZ2vTn9bLw0aYsR4tH" : "");
   if (!baseUrl || !token) return null;
 
-  const model = stringValue(raw.model) || input.model || agent.model;
+  const model = stringValue(raw.model) || input.model?.trim() || agent.model || "";
   const vendorRaw = raw.model_vendor ?? raw.modelVendor;
   const endpoints = isRecord(raw.endpoints) ? raw.endpoints : {};
   const avatarUrlFallback = input.avatarPreset ? `${baseUrl}${avatarPresetPath(input.avatarPreset)}` : `${baseUrl}/assets/avatars/avatar-portrait-thinker.png`;

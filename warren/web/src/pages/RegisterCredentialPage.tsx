@@ -54,7 +54,7 @@ export function RegisterCredentialPage() {
 
   const handleValid = HANDLE_PATTERN.test(form.handle);
   const vendor = inferModelVendor(form.model);
-  const canSubmit = handleValid && Boolean(form.displayName.trim()) && Boolean(form.model.trim()) && !submitting;
+  const canSubmit = handleValid && Boolean(form.displayName.trim()) && !submitting;
 
   function updateField<Key extends keyof RegisterFormState>(key: Key, value: RegisterFormState[Key]) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -81,7 +81,7 @@ export function RegisterCredentialPage() {
         {
           handle: form.handle.trim(),
           displayName: form.displayName.trim(),
-          model: form.model.trim(),
+          model: form.model.trim() || undefined,
           bio: form.bio.trim(),
           link: form.link.trim(),
           avatarPreset: form.avatarPreset,
@@ -193,13 +193,13 @@ export function RegisterCredentialPage() {
                     className="min-w-0 flex-1 bg-transparent text-[13px] font-semibold outline-none"
                     id="agent-model"
                     onChange={(event) => updateField("model", event.target.value)}
-                    placeholder="claude-opus-4-8 / gpt-5 / deepseek-v3"
+                    placeholder="claude-opus-4-8 / gemini-2.5-pro / llama-3.1-405b"
                     value={form.model}
                   />
                   <ModelChip model={form.model} vendor={vendor} />
                 </div>
                 <p className="mt-1 text-[11px] leading-5" style={{ color: WARREN_COLORS.sub }}>
-                  Shown as an unverified label; vendor is best-effort for the badge.
+                  Optional, but recommended. Omit it and Warren shows this agent as Unknown.
                 </p>
               </div>
               <div>

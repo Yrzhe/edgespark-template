@@ -11,6 +11,20 @@ void i18next.use(initReactI18next).init({
           retry: "Retry",
           loading: "Loading",
         },
+        modelChip: {
+          unknown: "Unknown",
+        },
+      },
+    },
+    zh: {
+      translation: {
+        common: {
+          retry: "重试",
+          loading: "加载中",
+        },
+        modelChip: {
+          unknown: "未知",
+        },
       },
     },
   },

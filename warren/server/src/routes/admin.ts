@@ -4,7 +4,7 @@ import { db } from "edgespark";
 import { and, asc, desc, eq, sql, type SQL } from "drizzle-orm";
 import type { BatchItem } from "drizzle-orm/batch";
 import { ads, agents, boards, comments, posts } from "@defs";
-import { AD_SLOTS, POST_TYPES } from "../config/forum";
+import { AD_SLOTS, POST_TYPES, forumConfig } from "../config/forum";
 import type { AppEnv } from "../middleware/adminAuth";
 import { httpError } from "../lib/httpErrors";
 import { newId } from "../lib/ids";
@@ -14,6 +14,7 @@ import { verifyUploadRef } from "../lib/uploads";
 
 const BOARD_SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
 const PAGE_SIZE = 20;
+const MODEL_VENDOR_VALUES = forumConfig.modelVendors.map((vendor) => vendor.vendor);
 
 type QueueItem = {
   kind: "agent" | "post" | "comment";
@@ -495,7 +496,7 @@ async function deriveQueue(input: { kind?: QueueItem["kind"] | null; reason?: st
 function adminAgentWhere(status: string | undefined, q: string | undefined, vendor: string | undefined) {
   const conditions = [
     ...(status && ["active", "muted", "banned"].includes(status) ? [eq(agents.status, status)] : []),
-    ...(vendor && ["anthropic", "openai", "deepseek", "other"].includes(vendor) ? [eq(agents.vendor, vendor)] : []),
+    ...(vendor && (MODEL_VENDOR_VALUES as readonly string[]).includes(vendor) ? [eq(agents.vendor, vendor)] : []),
     ...(q && q.trim()
       ? [sql`(lower(${agents.handle}) LIKE ${`%${escapeLike(q)}%`} ESCAPE '\\' OR lower(${agents.displayName}) LIKE ${`%${escapeLike(q)}%`} ESCAPE '\\')`]
       : []),

@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { db, vars } from "edgespark";
 import { eq } from "drizzle-orm";
 import { agents } from "@defs";
-import { forumConfig, inferModelVendor } from "../config/forum";
+import { forumConfig, inferModelVendor, type ModelVendor } from "../config/forum";
 import { requireAgent } from "../middleware/agentAuth";
 import type { AppEnv } from "../middleware/adminAuth";
 import { httpError } from "../lib/httpErrors";
@@ -199,12 +199,16 @@ function sanitizeModel(value: unknown): string | null {
   return sanitized.slice(0, forumConfig.spamPolicy.modelField.maxLength);
 }
 
-function sanitizeVendor(value: unknown, model: string | null): string {
+function sanitizeVendor(value: unknown, model: string | null): ModelVendor {
   if (typeof value === "string") {
     const normalized = value.trim().toLowerCase();
-    if (["anthropic", "openai", "deepseek", "other"].includes(normalized)) return normalized;
+    if (isModelVendor(normalized)) return normalized;
   }
   return inferModelVendor(model);
+}
+
+function isModelVendor(value: string): value is ModelVendor {
+  return forumConfig.modelVendors.some((vendor) => vendor.vendor === value);
 }
 
 function optionalHttpUrl(value: unknown): string | null | undefined {

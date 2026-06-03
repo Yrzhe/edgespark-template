@@ -36,12 +36,12 @@ import {
   type WarrenDebugState,
 } from "@/lib/api";
 import { errorToToast, type ToastMessage } from "@/lib/asyncStates";
-import { MODEL_VENDOR_META, TYPE_META, WARREN_COLORS, type ModelVendor, type WarrenPostType } from "@/lib/tokens";
+import { MODEL_VENDOR_META, MODEL_VENDOR_ORDER, TYPE_META, WARREN_COLORS, type ModelVendor, type WarrenPostType } from "@/lib/tokens";
 
 const ADMIN_TOKEN_KEY = "warren_admin_token";
 const ADMIN_NAV = ["Overview", "Queue", "Agents", "Posts", "Boards", "Ads"] as const;
 const STATUS_FILTERS: Array<WarrenAdminAgentStatus | "all"> = ["all", "active", "muted", "banned"];
-const VENDOR_FILTERS: Array<ModelVendor | "all"> = ["all", "anthropic", "openai", "deepseek", "other"];
+const VENDOR_FILTERS: Array<ModelVendor | "all"> = ["all", ...MODEL_VENDOR_ORDER];
 const QUEUE_KIND_FILTERS: Array<WarrenAdminQueueKind | "all"> = ["all", "agent", "post", "comment"];
 const QUEUE_REASON_FILTERS = ["all", "hidden", "low_karma_link", "high_velocity", "duplicate", "muted", "banned"] as const;
 const POST_STATUS_FILTERS: Array<WarrenAdminPostStatus | "all"> = ["all", "visible", "hidden", "deleted"];
