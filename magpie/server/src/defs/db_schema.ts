@@ -226,6 +226,24 @@ export const shares = sqliteTable("shares", {
   createdAt: integer("created_at").notNull(),
 }, (t) => [index("idx_shares_card").on(t.cardId, t.revokedAt), index("idx_shares_token").on(t.tokenHash)]);
 
+export const templateMarketplace = sqliteTable("template_marketplace", {
+  id: text("id").primaryKey(),
+  cardId: text("card_id").notNull().references(() => cards.id),
+  title: text("title").notNull(),
+  publishedByUserId: text("published_by_user_id").notNull(),
+  authorDisplayName: text("author_display_name").notNull().default("Magpie creator"),
+  thumbnailAssetId: text("thumbnail_asset_id").references(() => assets.id),
+  useCount: integer("use_count").notNull().default(0),
+  publishedAt: integer("published_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+  unpublishedAt: integer("unpublished_at"),
+  lockVersion: integer("lock_version").notNull().default(0),
+}, (t) => [
+  unique("uq_template_marketplace_card").on(t.cardId),
+  index("idx_template_marketplace_active").on(t.unpublishedAt, t.publishedAt),
+  index("idx_template_marketplace_card").on(t.cardId),
+]);
+
 export const apiKeys = sqliteTable("api_keys", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),

@@ -68,13 +68,13 @@ const zh = {
   editor: {
     backToLibrary: "卡片库",
     tabs: { agent: "智能体", inspector: "属性", rules: "品牌规则" },
-    actions: { saveDraft: "存草稿", saving: "保存中", makeVariant: "派生", publish: "发布" },
+    actions: { saveDraft: "存草稿", saving: "保存中", makeVariant: "派生", publish: "发布", publishTemplate: "发布模板", unpublishTemplate: "取消发布", publishingTemplate: "处理中", publishedTemplate: "已上架市场", publishTemplateReadyOnly: "Ready 卡片才能发布到市场", publishTemplateDone: "已发布到模板市场。", unpublishTemplateDone: "已从模板市场下架。" },
     palette: { label: "主题", canonical: "Bloome 原始配色" },
     sourceTabs: { layers: "图层", assets: "素材", templates: "模板", text: "文字", ai: "AI" },
     sourcePanels: {
       layers: { add: "添加图层", dragHint: "{{count}} 个图层 · 拖拽排序" },
       assets: { emptyTitle: "素材库暂无可用素材", emptyBody: "上传或生成的素材会出现在这里，可拖到画布或直接加到卡片。", openAgent: "打开智能体", loading: "正在载入素材库", error: "素材库载入失败", generating: "生成中", add: "加到卡片" },
-      templates: { emptyTitle: "暂无真实模板", emptyBody: "还没有 ready 卡片可作为模板。这里不会显示假模板。", search: "搜索模板…", recommended: "推荐", social: "社媒", poster: "海报", minimal: "极简", apply: "套用", applying: "套用中" },
+      templates: { emptyTitle: "暂无真实模板", emptyBody: "还没有 ready 卡片可作为模板。这里不会显示假模板。", search: "搜索模板…", loading: "正在载入模板", workspace: "工作区", marketplace: "市场", marketSearch: "搜索市场模板…", marketEmptyTitle: "市场暂无模板", marketEmptyBody: "公开模板会显示缩略图、作者和套用次数。", marketQueryEmptyTitle: "没有匹配模板", marketQueryEmptyBody: "换个关键词再试。", loadMore: "加载更多", loadingMore: "继续加载…", use: "套用", using: "套用中", useDone: "模板已套用。", useFailed: "模板套用失败。", cloneMissing: "模板克隆没有返回卡片 ID。", marketplaceFailed: "模板市场载入失败。", authorFallback: "Magpie 创作者", useCount: "{{count}} 次套用", recommended: "推荐", social: "社媒", poster: "海报", minimal: "极简", apply: "套用", applying: "套用中" },
       text: {
         addHeadline: "添加标题",
         addSubhead: "添加副标题",
@@ -240,13 +240,13 @@ const en = {
   editor: {
     backToLibrary: "Library",
     tabs: { agent: "Agent", inspector: "Inspector", rules: "Brand rules" },
-    actions: { saveDraft: "Save draft", saving: "Saving", makeVariant: "Make variant", publish: "Publish" },
+    actions: { saveDraft: "Save draft", saving: "Saving", makeVariant: "Make variant", publish: "Publish", publishTemplate: "Publish template", unpublishTemplate: "Unpublish", publishingTemplate: "Working", publishedTemplate: "Listed in marketplace", publishTemplateReadyOnly: "Only ready cards can be published to the marketplace", publishTemplateDone: "Published to the template marketplace.", unpublishTemplateDone: "Removed from the template marketplace." },
     palette: { label: "Theme", canonical: "Bloome default palette" },
     sourceTabs: { layers: "Layers", assets: "Assets", templates: "Templates", text: "Text", ai: "AI" },
     sourcePanels: {
       layers: { add: "Add layer", dragHint: "{{count}} layers · drag to reorder" },
       assets: { emptyTitle: "No addable assets", emptyBody: "Uploaded or generated assets appear here, ready to drag onto the canvas or add to the card.", openAgent: "Open agent", loading: "Loading asset library", error: "Asset library failed to load", generating: "Generating", add: "Add to card" },
-      templates: { emptyTitle: "No real templates", emptyBody: "No ready cards are available as templates yet. Fake template tiles are intentionally hidden.", search: "Search templates…", recommended: "Recommended", social: "Social", poster: "Poster", minimal: "Minimal", apply: "Apply", applying: "Applying" },
+      templates: { emptyTitle: "No real templates", emptyBody: "No ready cards are available as templates yet. Fake template tiles are intentionally hidden.", search: "Search templates…", loading: "Loading templates", workspace: "Workspace", marketplace: "Marketplace", marketSearch: "Search marketplace…", marketEmptyTitle: "No marketplace templates", marketEmptyBody: "Public templates will show thumbnails, authors, and usage counts here.", marketQueryEmptyTitle: "No matching templates", marketQueryEmptyBody: "Try another keyword.", loadMore: "Load more", loadingMore: "Loading more…", use: "Use", using: "Using", useDone: "Template applied.", useFailed: "Template use failed.", cloneMissing: "Template clone did not return a card id.", marketplaceFailed: "Marketplace failed to load.", authorFallback: "Magpie creator", useCount: "{{count}} uses", recommended: "Recommended", social: "Social", poster: "Poster", minimal: "Minimal", apply: "Apply", applying: "Applying" },
       text: {
         addHeadline: "Add headline",
         addSubhead: "Add subhead",

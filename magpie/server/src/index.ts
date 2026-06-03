@@ -10,6 +10,7 @@ import { imagegenBatchRoutes } from "./routes/imagegenBatch";
 import { copyRoutes } from "./routes/copy";
 import { manageRoutes } from "./routes/manage";
 import { shareRoutes } from "./routes/shares";
+import { templateMarketplaceRoutes } from "./routes/templates";
 import { logEvent } from "./lib/events";
 import { approvedUserOrAgentKey } from "./middleware/managementAuth";
 
@@ -26,6 +27,7 @@ app.get("/api/public/sessions", approvedUserOrAgentKey, (c) => listSessions(c));
 app.post("/api/public/sessions", approvedUserOrAgentKey, (c) => createSession(c));
 app.route("/api/public", publicRoutes);
 app.route("/api/public", shareRoutes);
+app.route("/api/public", templateMarketplaceRoutes);
 app.route("/api/public", cardRoutes);
 app.route("/api/public", assetRoutes);
 app.route("/api/public", adminAssetRoutes);

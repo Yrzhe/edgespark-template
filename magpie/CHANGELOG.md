@@ -6,6 +6,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); this project is 
 ## [Unreleased]
 
 ### Added
+- **M-207 — template marketplace: cross-user publish / browse / use (reviewer-verified 🟢, deploy `a3cb63f3`).**
+  Three server endpoints (`server/src/routes/templates.ts`, migration `0005_template_marketplace`):
+  `POST /api/public/cards/:id/publish-template` (owner publishes/unpublishes own card),
+  `GET /api/public/templates/marketplace` (paginated public list across users), and
+  `POST /api/public/templates/:id/use` (clones the template into a NEW card owned by the caller).
+  Web adds a 市场/Marketplace tab (browse grid + search + load-more + 套用 → opens the cloned card) and
+  an editor publish/unpublish strip. **Privacy (reviewer grep-verified):** marketplace responses expose
+  ONLY id (`tpl_*`, not the source card id) / title / presigned thumbnail / author displayName /
+  publishedAt / useCount — zero emails, userIds, source-card-id, or raw s3:/r2: URIs. **Clone isolation:**
+  use → caller-owned draft (parent+template_version = source), source untouched (lockVersion unchanged),
+  use_count +1, zero-cost provenance. **Authz:** foreign publish/unpublish → 403, unauth → 401,
+  use-unpublished → 404, member PATCH/agent-run on source → 403. M-233 in-editor local apply unregressed.
+  (Pre-existing team-gallery note tracked as M-240, not a marketplace regression.)
+
 - **M-208 — AI auto-layout suggestion (reviewer-verified 🟢, deploy `d0c1c782`).** A `suggest_layout`
   agent tool + `POST /api/public/cards/:id/suggest-layout` (`server/src/lib/layout/suggest.ts`) that,
   given a card's existing layers + canvas + brand rules, asks the LLM for a cleaner arrangement and

@@ -3,19 +3,21 @@ import { Outlet, RouterProvider, createBrowserRouter, useLocation, useNavigate, 
 import { useTranslation } from "react-i18next";
 
 import { AssetLibrary, type AssetItem, type AssetKind, type AssetSource, type FolderNode } from "@/components/magicpath/asset-library/AssetLibrary";
-import { CardEditor, type AgentRunView, type CardEditorCard, type CardEditorShareResult, type Derivative, type EditorSourceAsset, type EditorTemplate, type Layer } from "@/components/magicpath/card-editor/CardEditor";
+import { CardEditor, type AgentRunView, type CardEditorCard, type CardEditorShareResult, type Derivative, type EditorMarketplaceTemplate, type EditorSourceAsset, type EditorTemplate, type Layer } from "@/components/magicpath/card-editor/CardEditor";
 import { CardLibrary, type CardFamily, type LibraryCard, type Ratio } from "@/components/magicpath/card-library/CardLibrary";
 import MagpieShellV2 from "@/components/magicpath/magpie-shell-v2/MagpieShellV2";
 import { client } from "@/lib/edgespark";
-import { ApiError, magpieApi, type AdminEventRow, type AgentRunEvent, type AgentRunRow, type AssetFolderRow, type AssetRow, type CardDetailResponse, type CardRow, type MeResponse, type PaletteRow, type ProducedAsset, type PublicShareCard, type RuleReport, type SignupWhitelistRow } from "@/lib/api";
+import { ApiError, magpieApi, type AdminEventRow, type AgentRunEvent, type AgentRunRow, type AssetFolderRow, type AssetRow, type CardDetailResponse, type CardRow, type MarketplaceTemplatesResponse, type MarketplaceTemplateRow, type MeResponse, type PaletteRow, type ProducedAsset, type PublicShareCard, type RuleReport, type SignupWhitelistRow } from "@/lib/api";
 import { getCardRunIds, rememberCardRun } from "@/lib/runStore";
 import { setLocale } from "@/i18n";
 
 type NavId = "cards" | "assets" | "editor" | "palette" | "rules" | "team" | "inbox" | "admin";
 type AsyncState<T> = { data: T; loading: boolean; error: string | null };
 type AppSession = { me: MeResponse };
+type MarketplaceState = { templates: EditorMarketplaceTemplate[]; loading: boolean; loadingMore: boolean; error: string | null; hasMore: boolean; nextOffset: number | null };
 const SessionContext = createContext<AppSession | null>(null);
 const hintProps = (value: string): Record<string, string> => ({ ["place" + "holder"]: value });
+const MARKETPLACE_PAGE_SIZE = 20;
 
 const router = createBrowserRouter([
   { path: "/login", element: <LoginRoute /> },
@@ -621,6 +623,12 @@ function EditorRoute() {
   const [assetCache, setAssetCache] = useState<Record<string, ProducedAsset>>({});
   const [assetPollTick, setAssetPollTick] = useState(0);
   const [budgetModal, setBudgetModal] = useState<string | null>(null);
+  const [marketplaceQuery, setMarketplaceQuery] = useState("");
+  const [marketplaceReloadKey, setMarketplaceReloadKey] = useState(0);
+  const [marketplaceState, setMarketplaceState] = useState<MarketplaceState>({ templates: [], loading: true, loadingMore: false, error: null, hasMore: false, nextOffset: null });
+  const [usingMarketplaceTemplateId, setUsingMarketplaceTemplateId] = useState<string | null>(null);
+  const [templatePublishing, setTemplatePublishing] = useState(false);
+  const [publishedCards, setPublishedCards] = useState<Record<string, boolean>>({});
   const cardLockVersionRef = useRef<number | null>(null);
   useAutoDismissToast(toast, setToast);
   const assetState = useAsync<{ assets: EditorSourceAsset[] }>(
@@ -656,8 +664,42 @@ function EditorRoute() {
     [cardId, reloadKey]
   );
   useEffect(() => {
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setMarketplaceState((current) => ({ ...current, loading: true, loadingMore: false, error: null }));
+      void magpieApi.templates.marketplace({ q: marketplaceQuery, limit: MARKETPLACE_PAGE_SIZE, offset: 0 })
+        .then((response) => {
+          if (cancelled) return;
+          const page = marketplacePage(response, 0, MARKETPLACE_PAGE_SIZE);
+          setMarketplaceState({
+            templates: dedupeMarketplaceTemplates(page.templates),
+            loading: false,
+            loadingMore: false,
+            error: null,
+            hasMore: page.hasMore,
+            nextOffset: page.nextOffset,
+          });
+        })
+        .catch((error: unknown) => {
+          if (cancelled) return;
+          setMarketplaceState({ templates: [], loading: false, loadingMore: false, error: error instanceof Error ? error.message : t("editor.sourcePanels.templates.marketplaceFailed"), hasMore: false, nextOffset: null });
+        });
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [marketplaceQuery, marketplaceReloadKey]);
+  useEffect(() => {
     setActivePaletteId(state.data.card?.paletteId ?? null);
   }, [state.data.card?.id, state.data.card?.paletteId]);
+  useEffect(() => {
+    const id = state.data.card?.id;
+    if (!id) return;
+    const published = templatePublishedFromRecord(state.data.detail?.card ?? state.data.card);
+    if (published == null) return;
+    setPublishedCards((items) => items[id] === published ? items : { ...items, [id]: published });
+  }, [state.data.card?.id, state.data.detail?.card, state.data.card]);
   useEffect(() => {
     if (state.data.card?.id) cardLockVersionRef.current = Number(state.data.card.lockVersion ?? 0);
   }, [state.data.card?.id, state.data.card?.lockVersion]);
@@ -754,6 +796,57 @@ function EditorRoute() {
   const announce = (message: string) => {
     setToast(message);
     emitGlobalToast(message);
+  };
+  const loadMoreMarketplace = async () => {
+    if (marketplaceState.loading || marketplaceState.loadingMore || !marketplaceState.hasMore || marketplaceState.nextOffset == null) return;
+    setMarketplaceState((current) => ({ ...current, loadingMore: true, error: null }));
+    try {
+      const response = await magpieApi.templates.marketplace({ q: marketplaceQuery, limit: MARKETPLACE_PAGE_SIZE, offset: marketplaceState.nextOffset });
+      const page = marketplacePage(response, marketplaceState.nextOffset ?? 0, MARKETPLACE_PAGE_SIZE);
+      setMarketplaceState((current) => ({
+        templates: dedupeMarketplaceTemplates([...current.templates, ...page.templates]),
+        loading: false,
+        loadingMore: false,
+        error: null,
+        hasMore: page.hasMore,
+        nextOffset: page.nextOffset,
+      }));
+    } catch (error) {
+      setMarketplaceState((current) => ({ ...current, loading: false, loadingMore: false, error: error instanceof Error ? error.message : t("editor.sourcePanels.templates.marketplaceFailed") }));
+    }
+  };
+  const useMarketplaceTemplate = async (templateId: string) => {
+    setUsingMarketplaceTemplateId(templateId);
+    setToast(null);
+    try {
+      const response = await magpieApi.templates.use(templateId);
+      const newCardId = response.cardId ?? response.newCardId ?? response.id;
+      if (!newCardId) throw new Error(t("editor.sourcePanels.templates.cloneMissing"));
+      setMarketplaceReloadKey((key) => key + 1);
+      announce(t("editor.sourcePanels.templates.useDone"));
+      navigate(`/editor/${encodeURIComponent(newCardId)}`);
+    } catch (error) {
+      announce(error instanceof Error ? error.message : t("editor.sourcePanels.templates.useFailed"));
+    } finally {
+      setUsingMarketplaceTemplateId(null);
+    }
+  };
+  const publishMarketplaceTemplate = async (publish: boolean) => {
+    const card = state.data.card;
+    if (!card) return;
+    setTemplatePublishing(true);
+    setToast(null);
+    try {
+      if (publish) await magpieApi.cards.publishTemplate(card.id);
+      else await magpieApi.cards.unpublishTemplate(card.id);
+      setPublishedCards((items) => ({ ...items, [card.id]: publish }));
+      setMarketplaceReloadKey((key) => key + 1);
+      announce(publish ? t("editor.actions.publishTemplateDone") : t("editor.actions.unpublishTemplateDone"));
+    } catch (error) {
+      announce(error instanceof Error ? error.message : publish ? t("editor.actions.publishTemplate") : t("editor.actions.unpublishTemplate"));
+    } finally {
+      setTemplatePublishing(false);
+    }
   };
   const save = async (status: "draft" | "ready") => {
     setSaving(true);
@@ -947,6 +1040,9 @@ function EditorRoute() {
     await magpieApi.shares.setPublicAccess(card.id, false);
   };
   if (!cardId) return <CenteredCard title={t("routes.noCardTitle")} body={t("routes.noCardBody")} />;
+  const activeTemplatePublished = state.data.card
+    ? publishedCards[state.data.card.id] ?? templatePublishedFromRecord(state.data.detail?.card ?? state.data.card) ?? false
+    : false;
   return <>
     <BudgetQuoteDialog message={budgetModal} onClose={() => setBudgetModal(null)} />
     <CardEditor
@@ -955,6 +1051,13 @@ function EditorRoute() {
       templates={state.data.templates}
       templatesLoading={state.loading}
       templatesError={state.error}
+      marketplaceTemplates={marketplaceState.templates}
+      marketplaceLoading={marketplaceState.loading}
+      marketplaceLoadingMore={marketplaceState.loadingMore}
+      marketplaceError={marketplaceState.error}
+      marketplaceHasMore={marketplaceState.hasMore}
+      marketplaceQuery={marketplaceQuery}
+      marketplaceUsingId={usingMarketplaceTemplateId}
       palettes={state.data.palettes.map(toEditorPalette)}
       activePaletteId={activePaletteId}
       activeRules={state.data.activeRules}
@@ -977,8 +1080,14 @@ function EditorRoute() {
       onSuggestLayout={(id) => magpieApi.cards.suggestLayout(id)}
       onOpenDerivative={(id) => navigate(`/editor/${encodeURIComponent(id)}`)}
       onLoadTemplateLayers={loadTemplateLayers}
+      onMarketplaceSearch={setMarketplaceQuery}
+      onLoadMoreMarketplace={() => void loadMoreMarketplace()}
+      onUseMarketplaceTemplate={(id) => void useMarketplaceTemplate(id)}
       onCreateShare={createShare}
       onRevokeShare={revokeShare}
+      templatePublished={activeTemplatePublished}
+      templatePublishing={templatePublishing}
+      onPublishTemplate={(publish) => void publishMarketplaceTemplate(publish)}
       onPatchLayers={(layers, title) => patchLayers(layers, title)}
       onPatchCardMeta={(patch) => patchCardMeta(patch)}
     />
@@ -1656,6 +1765,69 @@ function useAutoDismissToast(toast: string | null, setToast: (value: string | nu
     const id = window.setTimeout(() => setToast(null), 2500);
     return () => window.clearTimeout(id);
   }, [toast, setToast]);
+}
+
+function marketplacePage(response: MarketplaceTemplatesResponse, offset: number, limit: number): { templates: EditorMarketplaceTemplate[]; hasMore: boolean; nextOffset: number | null } {
+  const raw = response.templates ?? response.items ?? [];
+  const templates = raw.map(toEditorMarketplaceTemplate);
+  const next = response.pagination?.nextOffset ?? response.nextOffset ?? null;
+  const hasMore = response.pagination?.hasMore ?? response.hasMore ?? next != null;
+  return {
+    templates,
+    hasMore,
+    nextOffset: hasMore ? Number(next ?? offset + limit) : null,
+  };
+}
+
+function toEditorMarketplaceTemplate(row: MarketplaceTemplateRow): EditorMarketplaceTemplate {
+  const author = row.authorHandle ?? row.authorDisplayName ?? row.author?.handle ?? row.author?.displayName ?? "Magpie creator";
+  return {
+    id: row.id,
+    title: row.title ?? "Untitled template",
+    thumbnail: row.thumbnail ?? row.thumbnailUrl ?? row.previewUrl ?? null,
+    authorHandle: sanitizePublicHandle(author),
+    publishedAt: row.publishedAt ?? null,
+    useCount: numericLike(row.useCount, 0),
+  };
+}
+
+function dedupeMarketplaceTemplates(rows: EditorMarketplaceTemplate[]): EditorMarketplaceTemplate[] {
+  const seen = new Set<string>();
+  const out: EditorMarketplaceTemplate[] = [];
+  for (const row of rows) {
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    out.push(row);
+  }
+  return out;
+}
+
+function sanitizePublicHandle(value: unknown): string {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw || raw.includes("@")) return "Magpie creator";
+  return raw.slice(0, 80);
+}
+
+function templatePublishedFromRecord(value: unknown): boolean | null {
+  if (!value || typeof value !== "object") return null;
+  const row = value as Record<string, unknown>;
+  for (const key of ["templatePublished", "template_published", "isTemplatePublished", "publishedAsTemplate", "marketplacePublished", "marketplace_published"]) {
+    if (key in row) return truthy(row[key]);
+  }
+  for (const key of ["publishedTemplateId", "published_template_id", "marketplaceTemplateId", "marketplace_template_id"]) {
+    if (typeof row[key] === "string" && row[key]) return true;
+  }
+  const nested = row.marketplaceTemplate ?? row.templateMarketplace;
+  if (nested && typeof nested === "object") {
+    const template = nested as Record<string, unknown>;
+    if (template.unpublishedAt || template.unpublished_at) return false;
+    if (template.id || template.publishedAt || template.published_at) return true;
+  }
+  return null;
+}
+
+function truthy(value: unknown): boolean {
+  return value === true || value === 1 || value === "1" || value === "true";
 }
 
 function groupCardFamilies(rows: CardRow[]): CardFamily[] {
@@ -2408,6 +2580,11 @@ function colorFromJson(text: string | null | undefined, fallback: string): strin
 
 function numeric(value: number | null | undefined, fallback: number): number {
   return Number.isFinite(value) ? Number(value) : fallback;
+}
+
+function numericLike(value: unknown, fallback: number): number {
+  const next = Number(value);
+  return Number.isFinite(next) ? next : fallback;
 }
 
 function parseStringArray(text: string | null | undefined): string[] {

@@ -111,6 +111,38 @@ export type SuggestLayoutResponse = {
   rationale?: string | null;
 };
 
+export type MarketplaceTemplateRow = {
+  id: string;
+  title?: string | null;
+  thumbnail?: string | null;
+  thumbnailUrl?: string | null;
+  previewUrl?: string | null;
+  authorHandle?: string | null;
+  authorDisplayName?: string | null;
+  author?: { handle?: string | null; displayName?: string | null } | null;
+  publishedAt?: number | string | null;
+  useCount?: number | string | null;
+};
+
+export type MarketplaceTemplatesResponse = {
+  templates?: MarketplaceTemplateRow[];
+  items?: MarketplaceTemplateRow[];
+  pagination?: {
+    limit?: number;
+    offset?: number;
+    hasMore?: boolean;
+    nextOffset?: number | null;
+  };
+  hasMore?: boolean;
+  nextOffset?: number | null;
+};
+
+export type UseMarketplaceTemplateResponse = {
+  cardId?: string;
+  newCardId?: string;
+  id?: string;
+};
+
 export type PublicShareCard = {
   title?: string | null;
   name?: string | null;
@@ -322,6 +354,22 @@ export const magpieApi = {
       request<{ cardId: string; reports: RuleReport[] }>(`/api/public/cards/${encodeURIComponent(id)}/rule-report`),
     suggestLayout: (id: string) =>
       request<SuggestLayoutResponse>(`/api/public/cards/${encodeURIComponent(id)}/suggest-layout`, { method: "POST" }),
+    publishTemplate: (id: string) =>
+      request<{ template: MarketplaceTemplateRow }>(`/api/public/cards/${encodeURIComponent(id)}/publish-template`, { method: "POST" }),
+    unpublishTemplate: (id: string) =>
+      request<{ unpublished: boolean; templateId: string | null }>(`/api/public/cards/${encodeURIComponent(id)}/publish-template`, { method: "DELETE" }),
+  },
+  templates: {
+    marketplace: (params: { q?: string; limit?: number; offset?: number } = {}) => {
+      const query = new URLSearchParams();
+      if (params.q?.trim()) query.set("q", params.q.trim());
+      if (params.limit) query.set("limit", String(params.limit));
+      if (params.offset) query.set("offset", String(params.offset));
+      const qs = query.toString();
+      return request<MarketplaceTemplatesResponse>(`/api/public/templates/marketplace${qs ? `?${qs}` : ""}`);
+    },
+    use: (id: string) =>
+      request<UseMarketplaceTemplateResponse>(`/api/public/templates/${encodeURIComponent(id)}/use`, { method: "POST" }),
   },
   shares: {
     get: (cardId: string) =>

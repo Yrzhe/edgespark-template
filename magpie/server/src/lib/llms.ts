@@ -18,6 +18,7 @@ Content-Type: application/json
 - cards.save must include agentRunId, templateVersion, and ruleVersionAtSave provenance. The server evaluates rules on every save.
 - If a card fails rules, requested status=ready is forced to draft and the response includes a 409 rule report unless an owner override is recorded.
 - Image generation has two modes: transparent for isolated small assets; opaque for full posters or hero scenes. Both inject the active palette and Bloome visual DNA unless the user overrides. Optional referenceAssetIds must be 1-3 ready assets owned by the caller; references use the gpt-image-1 image-input/edit path and are rejected for unsupported model paths.
+- Template marketplace publishing is creator/owner-only. Public marketplace list items expose only public fields (template id, title, preview URL, author display name, publishedAt, useCount). Never expose emails, ownerUserId, raw storage URIs, or source card rows.
 
 ## Agent Run Tool Use
 
@@ -49,6 +50,10 @@ GET ${baseUrl}/api/public/agent.md
 GET ${baseUrl}/api/me
 GET ${baseUrl}/api/me/token
 GET/POST/PATCH ${baseUrl}/api/public/cards
+POST ${baseUrl}/api/public/cards/:id/publish-template
+DELETE ${baseUrl}/api/public/cards/:id/publish-template
+GET ${baseUrl}/api/public/templates/marketplace
+POST ${baseUrl}/api/public/templates/:id/use
 GET ${baseUrl}/api/public/cards/:id/rule-report
 GET/POST/PATCH/DELETE ${baseUrl}/api/public/assets
 GET/POST ${baseUrl}/api/public/asset-folders

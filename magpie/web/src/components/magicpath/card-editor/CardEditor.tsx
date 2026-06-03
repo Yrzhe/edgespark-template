@@ -75,6 +75,14 @@ export type EditorTemplate = {
   category: string;
   createdAtLabel: string;
 };
+export type EditorMarketplaceTemplate = {
+  id: string;
+  title: string;
+  thumbnail?: string | null;
+  authorHandle: string;
+  publishedAt?: number | string | null;
+  useCount: number;
+};
 export type CardEditorShareResult = { url: string; publicAccess: boolean };
 const LAYERS: Layer[] = [{
   id: 'l_text_1',
@@ -284,6 +292,13 @@ export type CardEditorProps = {
   templates?: EditorTemplate[];
   templatesLoading?: boolean;
   templatesError?: string | null;
+  marketplaceTemplates?: EditorMarketplaceTemplate[];
+  marketplaceLoading?: boolean;
+  marketplaceLoadingMore?: boolean;
+  marketplaceError?: string | null;
+  marketplaceHasMore?: boolean;
+  marketplaceQuery?: string;
+  marketplaceUsingId?: string | null;
   palettes?: EditorPalette[];
   activePaletteId?: string | null;
   activeRules?: unknown[];
@@ -306,8 +321,14 @@ export type CardEditorProps = {
   onSuggestLayout?: (cardId: string) => Promise<LayoutSuggestionResult>;
   onOpenDerivative?: (id: string) => void;
   onLoadTemplateLayers?: (id: string) => Promise<Layer[]>;
+  onMarketplaceSearch?: (query: string) => void;
+  onLoadMoreMarketplace?: () => void;
+  onUseMarketplaceTemplate?: (id: string) => void;
   onCreateShare?: () => Promise<CardEditorShareResult>;
   onRevokeShare?: () => Promise<void>;
+  templatePublished?: boolean;
+  templatePublishing?: boolean;
+  onPublishTemplate?: (publish: boolean) => void;
   onPatchLayers?: (layers: Layer[], title?: string) => Promise<void> | void;
   onPatchCardMeta?: (patch: { title?: string; ratio?: string }) => Promise<void> | void;
 };
@@ -317,6 +338,13 @@ export const CardEditor = ({
   templates = [],
   templatesLoading = false,
   templatesError = null,
+  marketplaceTemplates = [],
+  marketplaceLoading = false,
+  marketplaceLoadingMore = false,
+  marketplaceError = null,
+  marketplaceHasMore = false,
+  marketplaceQuery = '',
+  marketplaceUsingId = null,
   palettes = [],
   activePaletteId = null,
   activeRules = [],
@@ -339,8 +367,14 @@ export const CardEditor = ({
   onSuggestLayout,
   onOpenDerivative,
   onLoadTemplateLayers,
+  onMarketplaceSearch,
+  onLoadMoreMarketplace,
+  onUseMarketplaceTemplate,
   onCreateShare,
   onRevokeShare,
+  templatePublished = false,
+  templatePublishing = false,
+  onPublishTemplate,
   onPatchLayers,
   onPatchCardMeta
 }: CardEditorProps) => {
@@ -948,6 +982,13 @@ export const CardEditor = ({
         templates={templates}
         templatesLoading={templatesLoading}
         templatesError={templatesError}
+        marketplaceTemplates={marketplaceTemplates}
+        marketplaceLoading={marketplaceLoading}
+        marketplaceLoadingMore={marketplaceLoadingMore}
+        marketplaceError={marketplaceError}
+        marketplaceHasMore={marketplaceHasMore}
+        marketplaceQuery={marketplaceQuery}
+        marketplaceUsingId={marketplaceUsingId}
         applyingTemplateId={applyingTemplateId}
         producedAssets={producedAssets}
         referenceAssets={referenceAssets}
@@ -967,6 +1008,9 @@ export const CardEditor = ({
         onOpenExport={() => setExportOpen(true)}
         onSaveDraft={onSaveDraft}
         onSaveReady={onSaveReady}
+        templatePublished={templatePublished}
+        templatePublishing={templatePublishing}
+        onPublishTemplate={onPublishTemplate}
         onSetMobileSheet={setMobileSheet}
         onSetInspectorDetent={setMobileInspectorDetent}
         onSetZoom={setMobileZoom}
@@ -990,6 +1034,9 @@ export const CardEditor = ({
         onDragEndRow={() => { setDragLayerId(null); setDropTarget(null); }}
         onOpenDerivative={onOpenDerivative}
         onApplyTemplate={(id) => void applyTemplate(id)}
+        onMarketplaceSearch={onMarketplaceSearch}
+        onLoadMoreMarketplace={onLoadMoreMarketplace}
+        onUseMarketplaceTemplate={onUseMarketplaceTemplate}
         onOpenAgent={() => { setRightPanel('agent'); setMobileSheet('ai'); }}
         onAgentInputChange={setAgentInput}
         onAgentModeChange={setAgentMode}
@@ -1024,6 +1071,13 @@ export const CardEditor = ({
           templates={templates}
           templatesLoading={templatesLoading}
           templatesError={templatesError}
+          marketplaceTemplates={marketplaceTemplates}
+          marketplaceLoading={marketplaceLoading}
+          marketplaceLoadingMore={marketplaceLoadingMore}
+          marketplaceError={marketplaceError}
+          marketplaceHasMore={marketplaceHasMore}
+          marketplaceQuery={marketplaceQuery}
+          marketplaceUsingId={marketplaceUsingId}
           applyingTemplateId={applyingTemplateId}
           producedAssets={producedAssets}
           referenceAssets={referenceAssets}
@@ -1049,6 +1103,9 @@ export const CardEditor = ({
           onDragEndRow={() => { setDragLayerId(null); setDropTarget(null); }}
           onOpenDerivative={onOpenDerivative}
           onApplyTemplate={(id) => void applyTemplate(id)}
+          onMarketplaceSearch={onMarketplaceSearch}
+          onLoadMoreMarketplace={onLoadMoreMarketplace}
+          onUseMarketplaceTemplate={onUseMarketplaceTemplate}
           onOpenAgent={() => setRightPanel('agent')}
           onAgentInputChange={setAgentInput}
           onAgentModeChange={setAgentMode}
@@ -1094,6 +1151,17 @@ export const CardEditor = ({
             <button onClick={() => setExportOpen(true)} aria-label={t('export.button')} title={t('export.button')} className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-2 py-1.5 text-[12px] text-[#42485a] hover:bg-[#f3f4f6]">
               <Download className="w-3.5 h-3.5 shrink-0" /> <span className="whitespace-nowrap max-[1180px]:hidden">{t('export.button')}</span>
             </button>
+            {onPublishTemplate && <button
+              data-m207-marketplace="publish"
+              disabled={templatePublishing || activeCard.status !== 'ready'}
+              onClick={() => onPublishTemplate(!templatePublished)}
+              aria-label={templatePublished ? t('editor.actions.unpublishTemplate') : t('editor.actions.publishTemplate')}
+              title={activeCard.status === 'ready' ? (templatePublished ? t('editor.actions.unpublishTemplate') : t('editor.actions.publishTemplate')) : t('editor.actions.publishTemplateReadyOnly')}
+              className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-2 py-1.5 text-[12px] font-semibold disabled:opacity-45 ${templatePublished ? 'border border-[#f3d0cc] bg-[#fff8f5] text-[#BC4E32] hover:bg-[#fdeee9]' : 'border border-[#f3b39c] bg-white text-[#d9532b] hover:bg-[#fff8f5]'}`}
+            >
+              {templatePublishing ? <Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin" /> : templatePublished ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0" /> : <LayoutTemplate className="w-3.5 h-3.5 shrink-0" />}
+              <span className="whitespace-nowrap max-[1180px]:hidden">{templatePublishing ? t('editor.actions.publishingTemplate') : templatePublished ? t('editor.actions.unpublishTemplate') : t('editor.actions.publishTemplate')}</span>
+            </button>}
             <button disabled={saving} onClick={onSaveDraft} aria-label={saving ? t('editor.actions.saving') : t('editor.actions.saveDraft')} title={saving ? t('editor.actions.saving') : t('editor.actions.saveDraft')} className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-2 py-1.5 text-[12px] text-[#42485a] hover:bg-[#f3f4f6] disabled:opacity-50">
               {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" /> : <Save className="w-3.5 h-3.5 shrink-0" />} <span className="whitespace-nowrap max-[1180px]:hidden">{saving ? t('editor.actions.saving') : t('editor.actions.saveDraft')}</span>
             </button>
@@ -1206,6 +1274,13 @@ type MobileEditorLayoutProps = {
   templates: EditorTemplate[];
   templatesLoading: boolean;
   templatesError: string | null;
+  marketplaceTemplates: EditorMarketplaceTemplate[];
+  marketplaceLoading: boolean;
+  marketplaceLoadingMore: boolean;
+  marketplaceError: string | null;
+  marketplaceHasMore: boolean;
+  marketplaceQuery: string;
+  marketplaceUsingId: string | null;
   applyingTemplateId: string | null;
   producedAssets: ProducedAsset[];
   referenceAssets: EditorSourceAsset[];
@@ -1225,6 +1300,9 @@ type MobileEditorLayoutProps = {
   onOpenExport: () => void;
   onSaveDraft?: () => void;
   onSaveReady?: () => void;
+  templatePublished: boolean;
+  templatePublishing: boolean;
+  onPublishTemplate?: (publish: boolean) => void;
   onSetMobileSheet: (sheet: MobileSheet) => void;
   onSetInspectorDetent: (detent: MobileInspectorDetent) => void;
   onSetZoom: (zoom: number) => void;
@@ -1248,6 +1326,9 @@ type MobileEditorLayoutProps = {
   onDragEndRow: () => void;
   onOpenDerivative?: (id: string) => void;
   onApplyTemplate: (id: string) => void;
+  onMarketplaceSearch?: (query: string) => void;
+  onLoadMoreMarketplace?: () => void;
+  onUseMarketplaceTemplate?: (id: string) => void;
   onOpenAgent: () => void;
   onAgentInputChange: (value: string) => void;
   onAgentModeChange: (value: 'generate' | 'search' | 'compose') => void;
@@ -1288,6 +1369,13 @@ const MobileEditorLayout = ({
   templates,
   templatesLoading,
   templatesError,
+  marketplaceTemplates,
+  marketplaceLoading,
+  marketplaceLoadingMore,
+  marketplaceError,
+  marketplaceHasMore,
+  marketplaceQuery,
+  marketplaceUsingId,
   applyingTemplateId,
   producedAssets,
   referenceAssets,
@@ -1307,6 +1395,9 @@ const MobileEditorLayout = ({
   onOpenExport,
   onSaveDraft,
   onSaveReady,
+  templatePublished,
+  templatePublishing,
+  onPublishTemplate,
   onSetMobileSheet,
   onSetInspectorDetent,
   onSetZoom,
@@ -1330,6 +1421,9 @@ const MobileEditorLayout = ({
   onDragEndRow,
   onOpenDerivative,
   onApplyTemplate,
+  onMarketplaceSearch,
+  onLoadMoreMarketplace,
+  onUseMarketplaceTemplate,
   onOpenAgent,
   onAgentInputChange,
   onAgentModeChange,
@@ -1368,6 +1462,22 @@ const MobileEditorLayout = ({
         <Send className="h-3.5 w-3.5 shrink-0" /> {t('editor.actions.publish')}
       </button>
     </header>
+    {onPublishTemplate && <div data-m207-marketplace="mobile-publish" className="flex h-[34px] shrink-0 items-center gap-2 border-b border-[#eef0f3] bg-white px-3 text-[11.5px]">
+      <span className={`min-w-0 flex-1 truncate ${templatePublished ? 'text-[#d9532b]' : 'text-[#7a8194]'}`}>
+        {templatePublished ? t('editor.actions.publishedTemplate') : t('editor.actions.publishTemplateReadyOnly')}
+      </span>
+      <button
+        type="button"
+        disabled={templatePublishing || card.status !== 'ready'}
+        onClick={() => onPublishTemplate(!templatePublished)}
+        className={`inline-flex min-h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-2.5 text-[11px] font-semibold disabled:opacity-45 ${templatePublished ? 'border border-[#f3d0cc] bg-white text-[#BC4E32]' : 'bg-[#F36440] text-white'}`}
+        aria-label={templatePublished ? t('editor.actions.unpublishTemplate') : t('editor.actions.publishTemplate')}
+        title={card.status === 'ready' ? (templatePublished ? t('editor.actions.unpublishTemplate') : t('editor.actions.publishTemplate')) : t('editor.actions.publishTemplateReadyOnly')}
+      >
+        {templatePublishing ? <Loader2 className="h-3 w-3 shrink-0 animate-spin" /> : <LayoutTemplate className="h-3 w-3 shrink-0" />}
+        {templatePublishing ? t('editor.actions.publishingTemplate') : templatePublished ? t('editor.actions.unpublishTemplate') : t('editor.actions.publishTemplate')}
+      </button>
+    </div>}
 
     <main className="relative min-h-0 flex-1 overflow-hidden" style={{ backgroundImage: 'radial-gradient(circle,#d8dce2 1px,transparent 1px)', backgroundSize: '22px 22px' }}>
       <div className="absolute right-3 top-3 z-20 rounded-full border border-[#e4e7ec] bg-white/90 px-2.5 py-1 text-[10.5px] font-mono text-[#42485a] shadow-sm">
@@ -1424,6 +1534,13 @@ const MobileEditorLayout = ({
         templates={templates}
         templatesLoading={templatesLoading}
         templatesError={templatesError}
+        marketplaceTemplates={marketplaceTemplates}
+        marketplaceLoading={marketplaceLoading}
+        marketplaceLoadingMore={marketplaceLoadingMore}
+        marketplaceError={marketplaceError}
+        marketplaceHasMore={marketplaceHasMore}
+        marketplaceQuery={marketplaceQuery}
+        marketplaceUsingId={marketplaceUsingId}
         applyingTemplateId={applyingTemplateId}
         producedAssets={producedAssets}
         referenceAssets={referenceAssets}
@@ -1449,6 +1566,9 @@ const MobileEditorLayout = ({
         onDragEndRow={onDragEndRow}
         onOpenDerivative={onOpenDerivative}
         onApplyTemplate={onApplyTemplate}
+        onMarketplaceSearch={onMarketplaceSearch}
+        onLoadMoreMarketplace={onLoadMoreMarketplace}
+        onUseMarketplaceTemplate={onUseMarketplaceTemplate}
         onOpenAgent={onOpenAgent}
         onAgentInputChange={onAgentInputChange}
         onAgentModeChange={onAgentModeChange}
@@ -1765,6 +1885,13 @@ const SourcePanelContent = ({
   templates,
   templatesLoading,
   templatesError,
+  marketplaceTemplates,
+  marketplaceLoading,
+  marketplaceLoadingMore,
+  marketplaceError,
+  marketplaceHasMore,
+  marketplaceQuery,
+  marketplaceUsingId,
   applyingTemplateId,
   producedAssets,
   referenceAssets,
@@ -1790,6 +1917,9 @@ const SourcePanelContent = ({
   onDragEndRow,
   onOpenDerivative,
   onApplyTemplate,
+  onMarketplaceSearch,
+  onLoadMoreMarketplace,
+  onUseMarketplaceTemplate,
   onOpenAgent,
   onAgentInputChange,
   onAgentModeChange,
@@ -1815,6 +1945,13 @@ const SourcePanelContent = ({
   templates: EditorTemplate[];
   templatesLoading: boolean;
   templatesError: string | null;
+  marketplaceTemplates: EditorMarketplaceTemplate[];
+  marketplaceLoading: boolean;
+  marketplaceLoadingMore: boolean;
+  marketplaceError: string | null;
+  marketplaceHasMore: boolean;
+  marketplaceQuery: string;
+  marketplaceUsingId: string | null;
   applyingTemplateId: string | null;
   producedAssets: ProducedAsset[];
   referenceAssets: EditorSourceAsset[];
@@ -1840,6 +1977,9 @@ const SourcePanelContent = ({
   onDragEndRow: () => void;
   onOpenDerivative?: (id: string) => void;
   onApplyTemplate: (id: string) => void;
+  onMarketplaceSearch?: (query: string) => void;
+  onLoadMoreMarketplace?: () => void;
+  onUseMarketplaceTemplate?: (id: string) => void;
   onOpenAgent: () => void;
   onAgentInputChange: (value: string) => void;
   onAgentModeChange: (value: 'generate' | 'search' | 'compose') => void;
@@ -1901,7 +2041,24 @@ const SourcePanelContent = ({
     </>}
 
     {source === 'assets' && <AssetsSourcePanel assets={libraryAssets} loading={libraryAssetsLoading} error={libraryAssetsError} onOpenAgent={onOpenAgent} />}
-    {source === 'templates' && <TemplatesSourcePanel mobile={mobile} templates={templates} loading={templatesLoading} error={templatesError} applyingId={applyingTemplateId} onApplyTemplate={onApplyTemplate} />}
+    {source === 'templates' && <TemplatesSourcePanel
+      mobile={mobile}
+      templates={templates}
+      loading={templatesLoading}
+      error={templatesError}
+      marketplaceTemplates={marketplaceTemplates}
+      marketplaceLoading={marketplaceLoading}
+      marketplaceLoadingMore={marketplaceLoadingMore}
+      marketplaceError={marketplaceError}
+      marketplaceHasMore={marketplaceHasMore}
+      marketplaceQuery={marketplaceQuery}
+      marketplaceUsingId={marketplaceUsingId}
+      applyingId={applyingTemplateId}
+      onApplyTemplate={onApplyTemplate}
+      onMarketplaceSearch={onMarketplaceSearch}
+      onLoadMoreMarketplace={onLoadMoreMarketplace}
+      onUseMarketplaceTemplate={onUseMarketplaceTemplate}
+    />}
     {source === 'text' && <TextSourcePanel onAddTextLayer={onAddTextLayer} />}
     {source === 'ai' && <AISourcePanel
       input={agentInput}
@@ -1985,18 +2142,39 @@ const TemplatesSourcePanel = ({
   templates,
   loading,
   error,
+  marketplaceTemplates,
+  marketplaceLoading,
+  marketplaceLoadingMore,
+  marketplaceError,
+  marketplaceHasMore,
+  marketplaceQuery,
+  marketplaceUsingId,
   applyingId,
   onApplyTemplate,
+  onMarketplaceSearch,
+  onLoadMoreMarketplace,
+  onUseMarketplaceTemplate,
 }: {
   mobile?: boolean;
   templates: EditorTemplate[];
   loading: boolean;
   error: string | null;
+  marketplaceTemplates: EditorMarketplaceTemplate[];
+  marketplaceLoading: boolean;
+  marketplaceLoadingMore: boolean;
+  marketplaceError: string | null;
+  marketplaceHasMore: boolean;
+  marketplaceQuery: string;
+  marketplaceUsingId: string | null;
   applyingId: string | null;
   onApplyTemplate: (id: string) => void;
+  onMarketplaceSearch?: (query: string) => void;
+  onLoadMoreMarketplace?: () => void;
+  onUseMarketplaceTemplate?: (id: string) => void;
 }) => {
   const { t } = useTranslation();
   const [query, setQuery] = useState('');
+  const [tab, setTab] = useState<'workspace' | 'marketplace'>('workspace');
   const [category, setCategory] = useState<'all' | 'social' | 'poster' | 'minimal'>('all');
   const categories: Array<{ id: typeof category; label: string }> = [
     { id: 'all', label: t('editor.sourcePanels.templates.recommended') },
@@ -2009,18 +2187,38 @@ const TemplatesSourcePanel = ({
     const matchesCategory = category === 'all' || tpl.category === category;
     return matchesQuery && matchesCategory;
   });
+  const activeCount = tab === 'workspace'
+    ? loading ? undefined : filtered.length
+    : marketplaceLoading && marketplaceTemplates.length === 0 ? undefined : marketplaceTemplates.length;
+  const searchValue = tab === 'workspace' ? query : marketplaceQuery;
+  const setSearchValue = (value: string) => {
+    if (tab === 'workspace') setQuery(value);
+    else onMarketplaceSearch?.(value);
+  };
   return <>
-    <SourcePanelHead title={t('editor.sourceTabs.templates')} count={loading ? undefined : filtered.length} />
+    <SourcePanelHead title={t('editor.sourceTabs.templates')} count={activeCount} />
     <div className="px-3 pb-2 pt-3">
-      <SearchBox value={query} onChange={setQuery} hint={t('editor.sourcePanels.templates.search')} />
-      <div className="mt-2 flex gap-1.5 overflow-x-auto pb-1 text-[11px]">
+      <div className="mb-2 grid grid-cols-2 gap-1 rounded-lg bg-[#f3f4f6] p-0.5 text-[11px]">
+        {(['workspace', 'marketplace'] as const).map((item) => <button
+          key={item}
+          type="button"
+          onClick={() => setTab(item)}
+          className={`inline-flex min-h-8 items-center justify-center gap-1 whitespace-nowrap rounded-md px-2 font-semibold ${tab === item ? 'bg-white text-[#1a1d24] shadow-sm' : 'text-[#7a8194] hover:text-[#1a1d24]'}`}
+        >
+          {item === 'workspace' ? <LayersIcon className="h-3.5 w-3.5 shrink-0" /> : <LayoutTemplate className="h-3.5 w-3.5 shrink-0" />}
+          {t(`editor.sourcePanels.templates.${item}`)}
+        </button>)}
+      </div>
+      <SearchBox value={searchValue} onChange={setSearchValue} hint={tab === 'workspace' ? t('editor.sourcePanels.templates.search') : t('editor.sourcePanels.templates.marketSearch')} />
+      {tab === 'workspace' && <div className="mt-2 flex gap-1.5 overflow-x-auto pb-1 text-[11px]">
         {categories.map((item) => <button key={item.id} onClick={() => setCategory(item.id)} className={`shrink-0 whitespace-nowrap rounded-full px-2.5 py-1 ${category === item.id ? 'bg-[#1a1d24] text-white' : 'bg-[#f3f4f6] text-[#42485a] hover:bg-[#eef0f3]'}`}>
           {item.label}
         </button>)}
-      </div>
+      </div>}
     </div>
-    <div className="flex-1 overflow-auto px-3 py-3">
-      {loading ? <SourceLoading label={t('editor.sourcePanels.assets.loading')} /> : error ? <SourceEmpty
+    <div className="min-h-0 flex-1 overflow-hidden px-3 py-3">
+      {tab === 'workspace' ? <div className="h-full overflow-auto">
+      {loading ? <SourceLoading label={t('editor.sourcePanels.templates.loading')} /> : error ? <SourceEmpty
         icon={<LayoutTemplate className="h-5 w-5" />}
         title={t('editor.sourcePanels.assets.error')}
         body={error}
@@ -2045,9 +2243,133 @@ const TemplatesSourcePanel = ({
         title={t('editor.sourcePanels.templates.emptyTitle')}
         body={t('editor.sourcePanels.templates.emptyBody')}
       />}
+      </div> : <MarketplaceTemplatesPanel
+        mobile={mobile}
+        templates={marketplaceTemplates}
+        loading={marketplaceLoading}
+        loadingMore={marketplaceLoadingMore}
+        error={marketplaceError}
+        hasMore={marketplaceHasMore}
+        query={marketplaceQuery}
+        usingId={marketplaceUsingId}
+        onUseTemplate={onUseMarketplaceTemplate}
+        onLoadMore={onLoadMoreMarketplace}
+      />}
     </div>
   </>;
 };
+
+const MarketplaceTemplatesPanel = ({
+  mobile,
+  templates,
+  loading,
+  loadingMore,
+  error,
+  hasMore,
+  query,
+  usingId,
+  onUseTemplate,
+  onLoadMore,
+}: {
+  mobile: boolean;
+  templates: EditorMarketplaceTemplate[];
+  loading: boolean;
+  loadingMore: boolean;
+  error: string | null;
+  hasMore: boolean;
+  query: string;
+  usingId: string | null;
+  onUseTemplate?: (id: string) => void;
+  onLoadMore?: () => void;
+}) => {
+  const { t } = useTranslation();
+  const q = query.trim().toLowerCase();
+  const visible = q
+    ? templates.filter((tpl) => `${tpl.title} ${tpl.authorHandle}`.toLowerCase().includes(q))
+    : templates;
+  const isInitialLoading = loading && templates.length === 0;
+  return <div data-m207-marketplace className={`flex h-full min-h-[320px] flex-col ${mobile ? 'max-h-[56dvh]' : ''}`}>
+    <div className="min-h-0 flex-1 overflow-auto pr-0.5">
+      {isInitialLoading ? <SourceLoading label={t('editor.sourcePanels.templates.loading')} /> : error && visible.length === 0 ? <SourceEmpty
+        icon={<AlertCircle className="h-5 w-5" />}
+        title={t('editor.sourcePanels.assets.error')}
+        body={error}
+      /> : visible.length ? <>
+        {error && <div className="mb-2 rounded-lg border border-[#f3d0cc] bg-[#fff8f5] px-2 py-1.5 text-[11px] text-[#BC4E32]">{error}</div>}
+        <div className="grid grid-cols-2 gap-2.5">
+          {visible.map((tpl) => <MarketplaceTemplateTile
+            key={tpl.id}
+            template={tpl}
+            mobile={mobile}
+            using={usingId === tpl.id}
+            disabled={!!usingId || !onUseTemplate}
+            onUse={() => onUseTemplate?.(tpl.id)}
+          />)}
+        </div>
+      </> : <SourceEmpty
+        icon={<LayoutTemplate className="h-5 w-5" />}
+        title={q ? t('editor.sourcePanels.templates.marketQueryEmptyTitle') : t('editor.sourcePanels.templates.marketEmptyTitle')}
+        body={q ? t('editor.sourcePanels.templates.marketQueryEmptyBody') : t('editor.sourcePanels.templates.marketEmptyBody')}
+      />}
+    </div>
+    <div className="shrink-0 border-t border-[#eef0f3] pt-2">
+      <button
+        type="button"
+        disabled={!hasMore || loadingMore || loading || !onLoadMore}
+        onClick={onLoadMore}
+        className="inline-flex min-h-9 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-[#e4e7ec] bg-white px-3 text-[12px] font-semibold text-[#42485a] hover:bg-[#f6f7f9] disabled:cursor-not-allowed disabled:opacity-45"
+      >
+        {loadingMore ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0" />}
+        {loadingMore ? t('editor.sourcePanels.templates.loadingMore') : t('editor.sourcePanels.templates.loadMore')}
+      </button>
+    </div>
+  </div>;
+};
+
+const MarketplaceTemplateTile = ({
+  template,
+  mobile,
+  using,
+  disabled,
+  onUse,
+}: {
+  template: EditorMarketplaceTemplate;
+  mobile: boolean;
+  using: boolean;
+  disabled: boolean;
+  onUse: () => void;
+}) => {
+  const { t } = useTranslation();
+  return <article className="overflow-hidden rounded-lg border border-[#e4e7ec] bg-white text-left shadow-[0_1px_2px_rgba(20,28,46,0.04)]">
+    <div className="relative aspect-square bg-[#F7F5F1]">
+      {template.thumbnail ? <img src={template.thumbnail} alt={template.title} loading="lazy" className="absolute inset-0 h-full w-full object-cover" onError={(event) => { (event.currentTarget as HTMLImageElement).style.opacity = '0'; }} /> : <MarketplaceTemplateFallback title={template.title} />}
+      <span className="absolute left-1.5 top-1.5 max-w-[calc(100%-12px)] truncate rounded bg-white/95 px-1.5 py-0.5 text-[9.5px] font-mono text-[#42485a] shadow-sm">
+        {t('editor.sourcePanels.templates.useCount', { count: template.useCount })}
+      </span>
+    </div>
+    <div className="flex min-h-[96px] flex-col gap-1.5 px-2 py-2">
+      <div className="min-w-0 truncate text-[11.5px] font-semibold text-[#1a1d24]" title={template.title}>{template.title}</div>
+      <div className="min-w-0 truncate text-[10px] font-mono text-[#7a8194]" title={template.authorHandle}>{template.authorHandle}</div>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={onUse}
+        className={`mt-auto inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md bg-[#F36440] px-2.5 py-1 text-[11px] font-semibold text-white shadow-sm hover:bg-[#d9532b] disabled:opacity-55 ${mobile ? 'min-h-10' : 'min-h-8'}`}
+      >
+        {using ? <Loader2 className="h-3 w-3 shrink-0 animate-spin" /> : <Copy className="h-3 w-3 shrink-0" />}
+        {using ? t('editor.sourcePanels.templates.using') : t('editor.sourcePanels.templates.use')}
+      </button>
+    </div>
+  </article>;
+};
+
+const MarketplaceTemplateFallback = ({ title }: { title: string }) => <div className="absolute inset-0 overflow-hidden bg-[#F7F5F1]">
+  <div className="absolute -right-5 -top-5 h-20 w-20 rounded-full bg-[#F36440]" />
+  <div className="absolute left-4 top-9 h-12 w-12 rounded-full border-2 border-[#0C0A0F]" />
+  <div className="absolute bottom-8 left-4 h-2.5 w-24 rounded-full bg-[#0C0A0F]/15" />
+  <div className="absolute bottom-4 left-4 h-2.5 w-16 rounded-full bg-[#F36440]/50" />
+  <div className="absolute inset-x-2 bottom-2 truncate rounded bg-white/85 px-1.5 py-0.5 text-[9.5px] font-semibold text-[#1a1d24]">{title}</div>
+</div>;
 
 const TextSourcePanel = ({ onAddTextLayer }: { onAddTextLayer: (preset?: 'headline' | 'subhead' | 'body') => void }) => {
   const { t } = useTranslation();
