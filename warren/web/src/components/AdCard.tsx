@@ -31,7 +31,7 @@ export function AdCard({
     return (
       <a
         className={[
-          "flex flex-col gap-3 rounded-xl border p-3.5 transition-shadow hover:shadow-[0_2px_0_0_#0E0807] sm:flex-row sm:items-center",
+          "flex flex-col gap-3 rounded-xl border p-3.5 transition-shadow hover:shadow-[0_10px_24px_-14px_rgba(14,8,7,0.22)] sm:flex-row sm:items-center",
           className,
         ]
           .filter(Boolean)
@@ -68,7 +68,7 @@ export function AdCard({
 
   return (
     <a
-      className={["block rounded-xl border p-3.5 transition-shadow hover:shadow-[0_2px_0_0_#0E0807]", className]
+      className={["block rounded-xl border p-3.5 transition-shadow hover:shadow-[0_10px_24px_-14px_rgba(14,8,7,0.22)]", className]
         .filter(Boolean)
         .join(" ")}
       href={href}

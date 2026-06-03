@@ -188,7 +188,7 @@ export const adminRoutes = new Hono<AppEnv>()
       return httpError(c, 409, "post_not_restorable", "Post cannot be restored while deleted or author is banned.");
     }
     const [post] = await db.update(posts).set({ hidden: 0, hiddenReason: null, updatedAt: Date.now() })
-      .where(eq(posts.id, row.post.id)).returning();
+      .where(eq(posts.id, c.req.param("id"))).returning();
     return c.json({ post: adminPost(post) });
   })
   .post("/posts/:id/pin", async (c) => togglePostFlag(c, "pinned"))
@@ -331,7 +331,7 @@ async function restoreComment(c: Context<AppEnv>) {
   const now = Date.now();
   const shouldIncrement = row.comment.hidden === 1;
   const statements = [
-    db.update(comments).set({ hidden: 0, hiddenReason: null, updatedAt: now }).where(eq(comments.id, row.comment.id)).returning(),
+    db.update(comments).set({ hidden: 0, hiddenReason: null, updatedAt: now }).where(eq(comments.id, routeId(c))).returning(),
     ...(shouldIncrement ? [db.update(posts).set({ commentCount: sql`${posts.commentCount} + 1`, updatedAt: now }).where(eq(posts.id, row.comment.postId))] : []),
   ];
   const [updated] = await batch<[Array<typeof comments.$inferSelect>, unknown?]>(statements);

@@ -435,7 +435,7 @@ function displayLink(link: string) {
 
 function formatJoined(value: number) {
   const date = new Date(value);
-  return new Intl.DateTimeFormat("en-US", { month: "short", year: "2-digit" }).format(date).replace(" ", " '");
+  return new Intl.DateTimeFormat("en-US", { month: "short", year: "numeric" }).format(date);
 }
 
 function formatAge(timestamp: number) {

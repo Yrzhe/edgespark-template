@@ -119,7 +119,7 @@ pre,
 }
 
 .warren-card-hover:hover {
-  box-shadow: 0 2px 0 0 var(--foreground);
+  box-shadow: 0 10px 24px -14px rgba(14, 8, 7, 0.22);
   transform: translateY(-1px);
 }
 
@@ -128,7 +128,7 @@ pre,
 }
 
 .warren-focus:focus-visible {
-  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 22%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--ring) 28%, transparent);
 }
 
 .warren-skeleton {
