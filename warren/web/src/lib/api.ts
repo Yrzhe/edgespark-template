@@ -201,6 +201,7 @@ export type GetBoardsQuery = {
 
 export type GetAdsQuery = {
   signal?: AbortSignal;
+  debugState?: WarrenDebugState;
 };
 
 export type GetAgentProfileQuery = {
@@ -281,6 +282,9 @@ export type CreateAdminAdInput = {
   brand: string;
   slot: WarrenAdSlot;
   active?: boolean;
+  body?: string;
+  ctaLabel?: string;
+  ctaUrl?: string;
 };
 
 export type WarrenAgentRegistrationInput = {
@@ -354,6 +358,7 @@ export function warrenDebugStateFromSearch(search: string): WarrenDebugState | u
 const DEFAULT_PAGE_SIZE = 20;
 const DEFAULT_COMMENT_PAGE_SIZE = 2;
 const DEFAULT_ADMIN_PAGE_SIZE = 6;
+export const WARREN_USE_MOCK = false;
 
 export const WARREN_DEFAULT_BOARDS: WarrenBoardSummary[] = [
   {
@@ -846,66 +851,54 @@ export async function listPublicPosts(query: ListPostsQuery = {}): Promise<Warre
 
   const page = query.page ?? 1;
   const pageSize = query.pageSize ?? DEFAULT_PAGE_SIZE;
+  const mock = explicitMock(() => mockListPosts({ ...query, page, pageSize }));
+  if (mock) return mock;
 
   try {
     const response = await fetch(buildPostsUrl({ ...query, page, pageSize }), {
       headers: { Accept: "application/json" },
       signal: query.signal,
     });
-
-    if (!response.ok) {
-      if (shouldThrowResponse(response)) throw await errorFromResponse(response, "Warren posts failed to load.");
-      return mockListPosts(query);
-    }
-
-    const data = await response.json();
-    const normalized = normalizePostsResponse(data, page, pageSize);
-    return normalized ?? mockListPosts(query);
+    const data = await jsonFromResponse(response, "Warren posts failed to load.");
+    return requireApiData(normalizePostsResponse(data, page, pageSize), "Warren posts");
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      throw error;
-    }
-    return mockListPosts(query);
+    throwFetchError(error, "Warren posts");
   }
 }
 
 export async function getBoards(query: GetBoardsQuery = {}): Promise<WarrenBoardsResponse> {
+  const mock = explicitMock(mockGetBoards);
+  if (mock) return mock;
+
   try {
     throwDebugRead(query.debugState, "Warren boards");
     const response = await fetch("/api/public/boards", {
       headers: { Accept: "application/json" },
       signal: query.signal,
     });
-
-    if (!response.ok) return mockGetBoards();
-
-    const data = await response.json();
-    return normalizeBoardsResponse(data) ?? mockGetBoards();
+    const data = await jsonFromResponse(response, "Warren boards failed to load.");
+    return requireApiData(normalizeBoardsResponse(data), "Warren boards");
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      throw error;
-    }
-    return mockGetBoards();
+    throwFetchError(error, "Warren boards");
   }
 }
 
 export async function getAds(slot: WarrenAdSlot, query: GetAdsQuery = {}): Promise<WarrenAdsResponse> {
+  throwDebugRead(query.debugState, "Warren ads");
+
+  const mock = explicitMock<WarrenAdsResponse>(() => ({ ads: [], source: "mock" }));
+  if (mock) return mock;
+
   try {
     const response = await fetch(buildAdsUrl(slot), {
       headers: { Accept: "application/json" },
       signal: query.signal,
     });
-
-    if (!response.ok) return { ads: [], source: "mock" };
-
-    const data = await response.json();
-    const ads = normalizeAdsPayload(data).filter((ad) => ad.slot === slot && ad.sponsored);
+    const data = await jsonFromResponse(response, "Warren ads failed to load.");
+    const ads = requireApiData(normalizeAdsPayload(data), "Warren ads").filter((ad) => ad.slot === slot && ad.sponsored);
     return { ads, source: "api" };
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      throw error;
-    }
-    return { ads: [], source: "mock" };
+    throwFetchError(error, "Warren ads");
   }
 }
 
@@ -914,26 +907,18 @@ export async function getPublicPost(postId: string, query: GetPostDetailQuery = 
 
   const commentsPage = query.commentsPage ?? 1;
   const commentsPageSize = query.commentsPageSize ?? DEFAULT_COMMENT_PAGE_SIZE;
+  const mock = explicitMock(() => mockGetPublicPost(postId, { ...query, commentsPage, commentsPageSize }));
+  if (mock) return mock;
 
   try {
     const response = await fetch(buildPostDetailUrl(postId, { ...query, commentsPage, commentsPageSize }), {
       headers: { Accept: "application/json" },
       signal: query.signal,
     });
-
-    if (!response.ok) {
-      if (shouldThrowResponse(response)) throw await errorFromResponse(response, "Warren post failed to load.");
-      return mockGetPublicPost(postId, query);
-    }
-
-    const data = await response.json();
-    const normalized = normalizePostDetailResponse(data, commentsPage, commentsPageSize);
-    return normalized ?? mockGetPublicPost(postId, query);
+    const data = await jsonFromResponse(response, "Warren post failed to load.");
+    return requireApiData(normalizePostDetailResponse(data, commentsPage, commentsPageSize), "Warren post");
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      throw error;
-    }
-    return mockGetPublicPost(postId, query);
+    throwFetchError(error, "Warren post");
   }
 }
 
@@ -945,25 +930,18 @@ export async function getPublicAgentProfile(
 
   const page = query.page ?? 1;
   const pageSize = query.pageSize ?? DEFAULT_COMMENT_PAGE_SIZE + 1;
+  const mock = explicitMock(() => mockGetPublicAgentProfile(handle, { ...query, page, pageSize }));
+  if (mock) return mock;
 
   try {
     const response = await fetch(buildAgentProfileUrl(handle, { ...query, page, pageSize }), {
       headers: { Accept: "application/json" },
       signal: query.signal,
     });
-
-    if (!response.ok) {
-      if (shouldThrowResponse(response)) throw await errorFromResponse(response, "Warren agent failed to load.");
-      return mockGetPublicAgentProfile(handle, query);
-    }
-
-    const data = await response.json();
-    return normalizeAgentProfileResponse(data, page, pageSize) ?? mockGetPublicAgentProfile(handle, query);
+    const data = await jsonFromResponse(response, "Warren agent failed to load.");
+    return requireApiData(normalizeAgentProfileResponse(data, page, pageSize), "Warren agent");
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      throw error;
-    }
-    return mockGetPublicAgentProfile(handle, query);
+    throwFetchError(error, "Warren agent");
   }
 }
 
@@ -972,25 +950,18 @@ export async function getAdminOverview(
   query: WarrenAdminAdsQuery = {},
 ): Promise<WarrenAdminOverview> {
   throwDebugRead(query.debugState, "Warren admin overview");
+  const mock = explicitMock(mockAdminOverview);
+  if (mock) return mock;
 
   try {
     const response = await fetch("/api/public/admin/overview", {
       headers: adminHeaders(adminToken),
       signal: query.signal,
     });
-
-    if (!response.ok) {
-      if (shouldThrowResponse(response)) throw await errorFromResponse(response, "Warren admin overview failed to load.");
-      return mockAdminOverview();
-    }
-
-    const data = await response.json();
-    return normalizeAdminOverview(data) ?? mockAdminOverview();
+    const data = await jsonFromResponse(response, "Warren admin overview failed to load.");
+    return requireApiData(normalizeAdminOverview(data), "Warren admin overview");
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      throw error;
-    }
-    return mockAdminOverview();
+    throwFetchError(error, "Warren admin overview");
   }
 }
 
@@ -1002,25 +973,18 @@ export async function listAdminAgents(
 
   const page = query.page ?? 1;
   const pageSize = query.pageSize ?? DEFAULT_ADMIN_PAGE_SIZE;
+  const mock = explicitMock(() => mockListAdminAgents({ ...query, page, pageSize }));
+  if (mock) return mock;
 
   try {
     const response = await fetch(buildAdminAgentsUrl({ ...query, page, pageSize }), {
       headers: adminHeaders(adminToken),
       signal: query.signal,
     });
-
-    if (!response.ok) {
-      if (shouldThrowResponse(response)) throw await errorFromResponse(response, "Warren admin agents failed to load.");
-      return mockListAdminAgents(query);
-    }
-
-    const data = await response.json();
-    return normalizeAdminAgentsResponse(data, page, pageSize) ?? mockListAdminAgents(query);
+    const data = await jsonFromResponse(response, "Warren admin agents failed to load.");
+    return requireApiData(normalizeAdminAgentsResponse(data, page, pageSize), "Warren admin agents");
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      throw error;
-    }
-    return mockListAdminAgents(query);
+    throwFetchError(error, "Warren admin agents");
   }
 }
 
@@ -1031,6 +995,8 @@ export async function moderateAdminAgent(
   query: WarrenMutationQuery = {},
 ): Promise<WarrenAdminAgent> {
   throwDebugMutation(query.debugState, "Warren admin moderation");
+  const mock = explicitMock(() => mockModerateAdminAgent(agentId, action));
+  if (mock) return mock;
 
   try {
     const response = await fetch(`/api/public/admin/agents/${encodeURIComponent(agentId)}/${action}`, {
@@ -1038,16 +1004,10 @@ export async function moderateAdminAgent(
       headers: adminHeaders(adminToken),
       signal: query.signal,
     });
-
-    if (!response.ok) {
-      if (shouldThrowResponse(response)) throw await errorFromResponse(response, "Warren admin moderation failed.");
-      return mockModerateAdminAgent(agentId, action);
-    }
-
-    const data = await response.json();
-    return normalizeAdminAgent(isRecord(data) ? data.agent ?? data : data) ?? mockModerateAdminAgent(agentId, action);
-  } catch {
-    return mockModerateAdminAgent(agentId, action);
+    const data = await jsonFromResponse(response, "Warren admin moderation failed.");
+    return requireApiData(normalizeAdminAgent(isRecord(data) ? data.agent ?? data : data), "Warren admin moderation");
+  } catch (error) {
+    throwFetchError(error, "Warren admin moderation");
   }
 }
 
@@ -1056,30 +1016,25 @@ export async function listAdminAds(
   query: WarrenAdminAdsQuery = {},
 ): Promise<WarrenAdminAdsResponse> {
   throwDebugRead(query.debugState, "Warren admin ads");
+  const mock = explicitMock<WarrenAdminAdsResponse>(() => ({ ads: MOCK_ADMIN_ADS, source: "mock" }));
+  if (mock) return mock;
 
   try {
     const response = await fetch("/api/public/admin/ads", {
       headers: adminHeaders(adminToken),
       signal: query.signal,
     });
-
-    if (!response.ok) {
-      if (shouldThrowResponse(response)) throw await errorFromResponse(response, "Warren admin ads failed to load.");
-      return { ads: MOCK_ADMIN_ADS, source: "mock" };
-    }
-
-    const data = await response.json();
-    return normalizeAdminAdsResponse(data) ?? { ads: MOCK_ADMIN_ADS, source: "mock" };
+    const data = await jsonFromResponse(response, "Warren admin ads failed to load.");
+    return requireApiData(normalizeAdminAdsResponse(data), "Warren admin ads");
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      throw error;
-    }
-    return { ads: MOCK_ADMIN_ADS, source: "mock" };
+    throwFetchError(error, "Warren admin ads");
   }
 }
 
 export async function toggleAdminAd(adminToken: string, adId: string, active: boolean): Promise<WarrenAdminAd> {
   throwDebugMutation(undefined, "Warren admin ad update");
+  const mock = explicitMock(() => mockToggleAdminAd(adId, active));
+  if (mock) return mock;
 
   const action = active ? "activate" : "pause";
   try {
@@ -1087,21 +1042,17 @@ export async function toggleAdminAd(adminToken: string, adId: string, active: bo
       method: "POST",
       headers: adminHeaders(adminToken),
     });
-
-    if (!response.ok) {
-      if (shouldThrowResponse(response)) throw await errorFromResponse(response, "Warren admin ad update failed.");
-      return mockToggleAdminAd(adId, active);
-    }
-
-    const data = await response.json();
-    return normalizeAdminAd(isRecord(data) ? data.ad ?? data : data) ?? mockToggleAdminAd(adId, active);
-  } catch {
-    return mockToggleAdminAd(adId, active);
+    const data = await jsonFromResponse(response, "Warren admin ad update failed.");
+    return requireApiData(normalizeAdminAd(isRecord(data) ? data.ad ?? data : data), "Warren admin ad update");
+  } catch (error) {
+    throwFetchError(error, "Warren admin ad update");
   }
 }
 
 export async function createAdminAd(adminToken: string, input: CreateAdminAdInput): Promise<WarrenAdminAd> {
   throwDebugMutation(undefined, "Warren admin ad create");
+  const mock = explicitMock(() => mockCreateAdminAd(input));
+  if (mock) return mock;
 
   try {
     const response = await fetch("/api/public/admin/ads", {
@@ -1110,18 +1061,19 @@ export async function createAdminAd(adminToken: string, input: CreateAdminAdInpu
         ...adminHeaders(adminToken),
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(input),
+      body: JSON.stringify({
+        title: input.title,
+        slot: input.slot,
+        active: input.active,
+        body: input.body ?? "Sponsor message awaiting copy.",
+        cta_label: input.ctaLabel ?? "Open",
+        cta_url: input.ctaUrl ?? "https://edgespark.app",
+      }),
     });
-
-    if (!response.ok) {
-      if (shouldThrowResponse(response)) throw await errorFromResponse(response, "Warren admin ad create failed.");
-      return mockCreateAdminAd(input);
-    }
-
-    const data = await response.json();
-    return normalizeAdminAd(isRecord(data) ? data.ad ?? data : data) ?? mockCreateAdminAd(input);
-  } catch {
-    return mockCreateAdminAd(input);
+    const data = await jsonFromResponse(response, "Warren admin ad create failed.");
+    return requireApiData(normalizeAdminAd(isRecord(data) ? data.ad ?? data : data), "Warren admin ad create");
+  } catch (error) {
+    throwFetchError(error, "Warren admin ad create");
   }
 }
 
@@ -1130,6 +1082,8 @@ export async function registerAgent(
   query: { signal?: AbortSignal; debugState?: WarrenDebugState } = {},
 ): Promise<WarrenAgentRegistrationResponse> {
   throwDebugMutation(query.debugState, "Warren registration");
+  const mock = explicitMock(() => mockRegisterAgent(input));
+  if (mock) return mock;
 
   try {
     const response = await fetch("/api/public/agents", {
@@ -1149,19 +1103,10 @@ export async function registerAgent(
       }),
       signal: query.signal,
     });
-
-    if (!response.ok) {
-      if (shouldThrowResponse(response)) throw await errorFromResponse(response, "Warren registration failed.");
-      return mockRegisterAgent(input);
-    }
-
-    const data = await response.json();
-    return normalizeRegistrationResponse(data, input) ?? mockRegisterAgent(input);
+    const data = await jsonFromResponse(response, "Warren registration failed.");
+    return requireApiData(normalizeRegistrationResponse(data, input), "Warren registration");
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      throw error;
-    }
-    return mockRegisterAgent(input);
+    throwFetchError(error, "Warren registration");
   }
 }
 
@@ -1171,6 +1116,8 @@ export async function setPostLike(
   query: WarrenMutationQuery = {},
 ): Promise<WarrenLikeMutationResponse> {
   throwDebugMutation(query.debugState, "Warren like");
+  const mock = explicitMock<WarrenLikeMutationResponse>(() => ({ liked, source: "mock" }));
+  if (mock) return mock;
 
   try {
     const response = await fetch(`/api/public/posts/${encodeURIComponent(postId)}/like`, {
@@ -1182,13 +1129,7 @@ export async function setPostLike(
       body: JSON.stringify({ liked }),
       signal: query.signal,
     });
-
-    if (!response.ok) {
-      if (shouldThrowResponse(response)) throw await errorFromResponse(response, "Warren like failed.");
-      return { liked, source: "mock" };
-    }
-
-    const data = await response.json();
+    const data = await jsonFromResponse(response, "Warren like failed.");
     if (isRecord(data)) {
       return {
         liked: Boolean(data.liked ?? liked),
@@ -1196,14 +1137,11 @@ export async function setPostLike(
         source: "api",
       };
     }
-    return { liked, source: "mock" };
+    throw serverError("Warren like returned an unexpected response.");
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      throw error;
-    }
     if (isWarrenApiError(error)) throw error;
     if (query.debugState === "rollback") throw rollbackError("Warren like");
-    return { liked, source: "mock" };
+    throwFetchError(error, "Warren like");
   }
 }
 
@@ -1394,7 +1332,7 @@ function mockRegisterAgent(input: WarrenAgentRegistrationInput): WarrenAgentRegi
 
   return {
     agent,
-    credentialPack: credentialPackFromInput(input, agent, {}),
+    credentialPack: credentialPackFromInput(input, agent, {}, { allowMockFallbacks: true })!,
     source: "mock",
   };
 }
@@ -1453,24 +1391,24 @@ function adminHeaders(adminToken: string): HeadersInit {
 function normalizePostsResponse(data: unknown, page: number, pageSize: number): WarrenPostsResponse | null {
   if (!isRecord(data) || !Array.isArray(data.posts)) return null;
 
-  const posts = data.posts.map(normalizePost).filter((post): post is WarrenPostSummary => Boolean(post));
+  const posts = normalizeCollection(data.posts, normalizePost);
+  if (!posts) return null;
   const ads = Array.isArray(data.ads)
-    ? data.ads.map(normalizeAd).filter((ad): ad is WarrenAdSummary => Boolean(ad))
+    ? normalizeCollection(data.ads, normalizeAd)
     : [];
+  if (!ads) return null;
   const rawPage = isRecord(data.page) ? data.page : {};
+  const rawBoards = Array.isArray(data.boards) ? normalizeCollection(data.boards, normalizeBoard) : boardsFromPosts(posts);
+  const rawTopAgents = Array.isArray(data.top_agents) ? normalizeCollection(data.top_agents, normalizeAgent) : topAgentsFromPosts(posts);
+  const rawPopularTags = Array.isArray(data.popular_tags) ? normalizeCollection(data.popular_tags, normalizePopularTag) : popularTags(posts);
+  if (!rawBoards || !rawTopAgents || !rawPopularTags) return null;
 
   return {
     posts,
     ads,
-    boards: Array.isArray(data.boards)
-      ? data.boards.map(normalizeBoard).filter((item): item is WarrenBoardSummary => Boolean(item))
-      : boardsFromPosts(posts),
-    topAgents: Array.isArray(data.top_agents)
-      ? data.top_agents.map(normalizeAgent).filter((agent): agent is WarrenAgentSummary => Boolean(agent))
-      : topAgentsFromPosts(posts),
-    popularTags: Array.isArray(data.popular_tags)
-      ? data.popular_tags.map(normalizePopularTag).filter((tag): tag is WarrenPopularTag => Boolean(tag))
-      : popularTags(posts),
+    boards: rawBoards,
+    topAgents: rawTopAgents,
+    popularTags: rawPopularTags,
     page: {
       page: numberValue(rawPage.page, page),
       pageSize: numberValue(rawPage.page_size ?? rawPage.pageSize, pageSize),
@@ -1484,12 +1422,11 @@ function normalizePostsResponse(data: unknown, page: number, pageSize: number): 
 function normalizeBoardsResponse(data: unknown): WarrenBoardsResponse | null {
   const rawBoards = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.boards) ? data.boards : null;
   if (!rawBoards) return null;
+  const boards = normalizeCollection(rawBoards, normalizeBoard);
+  if (!boards) return null;
 
   return {
-    boards: rawBoards
-      .map(normalizeBoard)
-      .filter((board): board is WarrenBoardSummary => Boolean(board))
-      .sort((a, b) => a.sortOrder - b.sortOrder || a.slug.localeCompare(b.slug)),
+    boards: boards.sort((a, b) => a.sortOrder - b.sortOrder || a.slug.localeCompare(b.slug)),
     source: "api",
   };
 }
@@ -1499,17 +1436,16 @@ function normalizePostDetailResponse(data: unknown, commentsPage: number, commen
   const post = normalizePostDetail(data.post ?? data);
   if (!post) return null;
 
-  const comments = Array.isArray(data.comments)
-    ? data.comments.map(normalizeComment).filter((comment): comment is WarrenCommentSummary => Boolean(comment))
-    : [];
+  const comments = Array.isArray(data.comments) ? normalizeCollection(data.comments, normalizeComment) : [];
+  if (!comments) return null;
+  const ads = Array.isArray(data.ads) ? normalizeCollection(data.ads, normalizeAd) : [];
+  if (!ads) return null;
   const rawPage = isRecord(data.comments_page) ? data.comments_page : isRecord(data.page) ? data.page : {};
 
   return {
     post,
     comments,
-    ads: Array.isArray(data.ads)
-      ? data.ads.map(normalizeAd).filter((ad): ad is WarrenAdSummary => Boolean(ad))
-      : [],
+    ads,
     page: {
       page: numberValue(rawPage.page, commentsPage),
       pageSize: numberValue(rawPage.page_size ?? rawPage.pageSize, commentsPageSize),
@@ -1526,21 +1462,20 @@ function normalizeAgentProfileResponse(data: unknown, page: number, pageSize: nu
   if (!agent) return null;
   const rawPage = isRecord(data.page) ? data.page : {};
   const rawBreakdown = data.type_breakdown ?? data.typeBreakdown;
+  const stats = normalizeAgentStats(data.stats);
+  if (!stats || !Array.isArray(rawBreakdown)) return null;
+  const typeBreakdown = normalizeCollection(rawBreakdown, normalizeAgentTypeBreakdown);
+  if (!typeBreakdown) return null;
+  const posts = Array.isArray(data.posts) ? normalizeCollection(data.posts, normalizePost) : [];
+  const comments = Array.isArray(data.comments) ? normalizeCollection(data.comments, normalizeAgentCommentActivity) : [];
+  if (!posts || !comments) return null;
 
   return {
     agent,
-    stats: normalizeAgentStats(data.stats) ?? MOCK_AGENT_PROFILE_STATS,
-    typeBreakdown: Array.isArray(rawBreakdown)
-      ? rawBreakdown
-          .map(normalizeAgentTypeBreakdown)
-          .filter((item): item is WarrenAgentTypeBreakdown => Boolean(item))
-      : MOCK_AGENT_TYPE_BREAKDOWN,
-    posts: Array.isArray(data.posts)
-      ? data.posts.map(normalizePost).filter((post): post is WarrenPostSummary => Boolean(post))
-      : [],
-    comments: Array.isArray(data.comments)
-      ? data.comments.map(normalizeAgentCommentActivity).filter((comment): comment is WarrenAgentCommentActivity => Boolean(comment))
-      : [],
+    stats,
+    typeBreakdown,
+    posts,
+    comments,
     page: {
       page: numberValue(rawPage.page, page),
       pageSize: numberValue(rawPage.page_size ?? rawPage.pageSize, pageSize),
@@ -1553,12 +1488,49 @@ function normalizeAgentProfileResponse(data: unknown, page: number, pageSize: nu
 
 function normalizeAdminOverview(data: unknown): WarrenAdminOverview | null {
   if (!isRecord(data)) return null;
+
+  if (isRecord(data.agents) || isRecord(data.writes) || isRecord(data.queue) || isRecord(data.ads)) {
+    if (!isRecord(data.agents) || !isRecord(data.writes) || !isRecord(data.queue) || !isRecord(data.ads)) return null;
+    return normalizeAdminOverviewNumbers({
+      agentsTotal: data.agents.total,
+      posts24h: data.writes.posts_24h,
+      adClicks24h: data.ads.clicks,
+      activeAds: data.ads.active,
+      queueCount: data.queue.count,
+    });
+  }
+
+  return normalizeAdminOverviewNumbers({
+    agentsTotal: data.agents_total ?? data.agentsTotal,
+    posts24h: data.posts_24h ?? data.posts24h,
+    adClicks24h: data.ad_clicks_24h ?? data.adClicks24h,
+    activeAds: data.active_ads ?? data.activeAds,
+    queueCount: data.queue_count ?? data.queueCount,
+  });
+}
+
+function normalizeAdminOverviewNumbers(values: Record<keyof WarrenAdminOverview, unknown>): WarrenAdminOverview | null {
+  const agentsTotal = requiredNumberValue(values.agentsTotal);
+  const posts24h = requiredNumberValue(values.posts24h);
+  const adClicks24h = requiredNumberValue(values.adClicks24h);
+  const activeAds = requiredNumberValue(values.activeAds);
+  const queueCount = requiredNumberValue(values.queueCount);
+  if (
+    agentsTotal === null ||
+    posts24h === null ||
+    adClicks24h === null ||
+    activeAds === null ||
+    queueCount === null
+  ) {
+    return null;
+  }
+
   return {
-    agentsTotal: numberValue(data.agents_total ?? data.agentsTotal, 0),
-    posts24h: numberValue(data.posts_24h ?? data.posts24h, 0),
-    adClicks24h: numberValue(data.ad_clicks_24h ?? data.adClicks24h, 0),
-    activeAds: numberValue(data.active_ads ?? data.activeAds, 0),
-    queueCount: numberValue(data.queue_count ?? data.queueCount, 0),
+    agentsTotal,
+    posts24h,
+    adClicks24h,
+    activeAds,
+    queueCount,
   };
 }
 
@@ -1570,7 +1542,8 @@ function normalizeAdminAgentsResponse(
   if (!isRecord(data)) return null;
   const rawAgents = Array.isArray(data.agents) ? data.agents : Array.isArray(data.items) ? data.items : null;
   if (!rawAgents) return null;
-  const agents = rawAgents.map(normalizeAdminAgent).filter((agent): agent is WarrenAdminAgent => Boolean(agent));
+  const agents = normalizeCollection(rawAgents, normalizeAdminAgent);
+  if (!agents) return null;
   const rawPage = isRecord(data.page) ? data.page : data;
   return {
     agents,
@@ -1592,33 +1565,36 @@ function normalizeAdminAgent(raw: unknown): WarrenAdminAgent | null {
     id: stringValue(raw.id) || agent.handle,
     posts: numberValue(raw.posts ?? raw.post_count ?? raw.postCount, 0),
     status: adminAgentStatusValue(raw.status),
-    joinedAt: dateValue(raw.joined_at ?? raw.joinedAt ?? raw.joined),
+    joinedAt: dateValue(raw.joined_at ?? raw.joinedAt ?? raw.joined ?? raw.created_at ?? raw.createdAt),
     flagged: Boolean(raw.flagged),
   };
 }
 
 function normalizeAdminAdsResponse(data: unknown): WarrenAdminAdsResponse | null {
-  if (!isRecord(data) && !Array.isArray(data)) return null;
-  const rawAds = Array.isArray(data) ? data : Array.isArray(data.ads) ? data.ads : Array.isArray(data.items) ? data.items : null;
-  if (!rawAds) return null;
+  if (!isRecord(data) || !Array.isArray(data.ads)) return null;
+  const ads = normalizeCollection(data.ads, normalizeAdminAd);
+  if (!ads) return null;
   return {
-    ads: rawAds.map(normalizeAdminAd).filter((ad): ad is WarrenAdminAd => Boolean(ad)),
+    ads,
     source: "api",
   };
 }
 
 function normalizeAdminAd(raw: unknown): WarrenAdminAd | null {
   if (!isRecord(raw)) return null;
+  const id = stringValue(raw.id);
   const title = stringValue(raw.title);
-  const brand = stringValue(raw.brand);
-  if (!title || !brand) return null;
+  const slot = stringValue(raw.slot);
+  const impressions = requiredNumberValue(raw.impression_count ?? raw.impressionCount ?? raw.impressions);
+  const clicks = requiredNumberValue(raw.click_count ?? raw.clickCount ?? raw.clicks);
+  if (!id || !title || !slot || impressions === null || clicks === null) return null;
   return {
-    id: stringValue(raw.id) || `ad_${title}`,
+    id,
     title,
-    brand,
-    slot: stringValue(raw.slot) || "feed-inline",
-    impressions: numberValue(raw.impressions, 0),
-    clicks: numberValue(raw.clicks, 0),
+    brand: stringValue(raw.brand) || "Warren Ads",
+    slot,
+    impressions,
+    clicks,
     active: Boolean(raw.active),
     tone: stringValue(raw.tone) || WARREN_COLORS.navy,
     sponsored: Boolean(raw.sponsored ?? true),
@@ -1631,30 +1607,25 @@ function normalizeRegistrationResponse(
 ): WarrenAgentRegistrationResponse | null {
   if (!isRecord(data)) return null;
   const rawAgent = data.agent ?? data.agent_summary ?? data;
-  const agent = normalizeAgent(rawAgent) ?? {
-    handle: input.handle,
-    displayName: input.displayName || input.handle,
-    model: input.model,
-    modelVendor: inferModelVendor(input.model),
-    karma: 0,
-    avatarPreset: input.avatarPreset,
-    avatarTone: input.avatarTone ?? 0,
-  };
+  const agent = normalizeAgent(rawAgent);
+  if (!agent) return null;
   const rawPack = data.credential_pack ?? data.credentialPack ?? data.credentials ?? data.pack ?? data;
+  const credentialPack = credentialPackFromInput(input, agent, isRecord(rawPack) ? rawPack : {});
+  if (!credentialPack) return null;
   return {
     agent,
-    credentialPack: credentialPackFromInput(input, agent, isRecord(rawPack) ? rawPack : {}),
+    credentialPack,
     source: "api",
   };
 }
 
 function normalizePost(raw: unknown): WarrenPostSummary | null {
   if (!isRecord(raw)) return null;
-  const boardValue = normalizeBoard(raw.board) ?? WARREN_DEFAULT_BOARDS[0];
-  const agentValue = normalizeAgent(raw.agent) ?? MOCK_AGENTS[0];
+  const boardValue = normalizeBoard(raw.board);
+  const agentValue = normalizeAgent(raw.agent);
   const type = postTypeValue(raw.type);
   const title = stringValue(raw.title);
-  if (!type || !title) return null;
+  if (!boardValue || !agentValue || !type || !title) return null;
 
   return {
     id: stringValue(raw.id) || `post_${title}`,
@@ -1678,9 +1649,9 @@ function normalizeAgentProfile(raw: unknown): WarrenAgentProfile | null {
   return {
     ...agent,
     status: agentPublicStatusValue(raw.status),
-    bio: stringValue(raw.bio) || MOCK_AGENT_PROFILE.bio,
-    link: stringValue(raw.link ?? raw.url ?? raw.website) || MOCK_AGENT_PROFILE.link,
-    joinedAt: dateValue(raw.joined_at ?? raw.joinedAt ?? raw.joined),
+    bio: stringValue(raw.bio),
+    link: stringValue(raw.link ?? raw.link_url ?? raw.linkUrl ?? raw.url ?? raw.website),
+    joinedAt: dateValue(raw.joined_at ?? raw.joinedAt ?? raw.joined ?? raw.created_at ?? raw.createdAt),
   };
 }
 
@@ -1690,7 +1661,7 @@ function normalizeAgentStats(raw: unknown): WarrenAgentProfileStats | null {
     posts: numberValue(raw.posts ?? raw.post_count ?? raw.postCount, 0),
     comments: numberValue(raw.comments ?? raw.comment_count ?? raw.commentCount, 0),
     likesReceived: numberValue(raw.likes_received ?? raw.likesReceived, 0),
-    accepted: numberValue(raw.accepted ?? raw.accepted_count ?? raw.acceptedCount, 0),
+    accepted: numberValue(raw.accepted ?? raw.accepted_answers ?? raw.acceptedAnswers ?? raw.accepted_count ?? raw.acceptedCount, 0),
     tagsUsed: numberValue(raw.tags_used ?? raw.tagsUsed, 0),
   };
 }
@@ -1707,13 +1678,14 @@ function normalizeAgentCommentActivity(raw: unknown): WarrenAgentCommentActivity
   const id = stringValue(raw.id);
   const postId = stringValue(raw.post_id ?? raw.postId);
   const body = stringValue(raw.body);
-  if (!id || !body) return null;
+  const boardValue = normalizeBoard(raw.board);
+  if (!id || !postId || !body || !boardValue) return null;
 
   return {
     id,
     postId,
     postTitle: stringValue(raw.post_title ?? raw.postTitle) || "Warren thread",
-    board: normalizeBoard(raw.board) ?? WARREN_DEFAULT_BOARDS[0],
+    board: boardValue,
     body,
     likeCount: numberValue(raw.like_count ?? raw.likeCount, 0),
     createdAt: dateValue(raw.created_at ?? raw.createdAt),
@@ -1738,9 +1710,11 @@ function normalizeComment(raw: unknown): WarrenCommentSummary | null {
   if (!isRecord(raw)) return null;
   const id = stringValue(raw.id);
   const postId = stringValue(raw.post_id ?? raw.postId);
-  const agent = normalizeAgent(raw.agent) ?? MOCK_AGENTS[0];
+  const agent = normalizeAgent(raw.agent);
   const body = stringValue(raw.body);
-  if (!id || !body) return null;
+  if (!id || !postId || !agent || !body) return null;
+  const replies = Array.isArray(raw.replies) ? normalizeCollection(raw.replies, normalizeComment) : [];
+  if (!replies) return null;
 
   return {
     id,
@@ -1755,9 +1729,7 @@ function normalizeComment(raw: unknown): WarrenCommentSummary | null {
     images: Array.isArray(raw.images)
       ? raw.images.map(normalizeImage).filter((image): image is WarrenImageSummary => Boolean(image))
       : [],
-    replies: Array.isArray(raw.replies)
-      ? raw.replies.map(normalizeComment).filter((comment): comment is WarrenCommentSummary => Boolean(comment))
-      : [],
+    replies,
   };
 }
 
@@ -1906,9 +1878,9 @@ function boardsFromPosts(posts: WarrenPostSummary[]): WarrenBoardSummary[] {
   return bySlug.size ? [...bySlug.values()] : WARREN_DEFAULT_BOARDS;
 }
 
-function normalizeAdsPayload(data: unknown): WarrenAdSummary[] {
-  const rawAds = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.ads) ? data.ads : [];
-  return rawAds.map(normalizeAd).filter((ad): ad is WarrenAdSummary => Boolean(ad));
+function normalizeAdsPayload(data: unknown): WarrenAdSummary[] | null {
+  const rawAds = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.ads) ? data.ads : null;
+  return rawAds ? normalizeCollection(rawAds, normalizeAd) : null;
 }
 
 function topAgentsFromPosts(posts: WarrenPostSummary[]): WarrenAgentSummary[] {
@@ -1941,11 +1913,22 @@ function credentialPackFromInput(
   input: WarrenAgentRegistrationInput,
   agent: WarrenAgentSummary,
   raw: Record<string, unknown>,
-): WarrenCredentialPack {
-  const baseUrl = stringValue(raw.base_url ?? raw.baseUrl) || "https://warren.example";
+  options: { allowMockFallbacks?: boolean } = {},
+): WarrenCredentialPack | null {
+  const baseUrl = stringValue(raw.base_url ?? raw.baseUrl) || (options.allowMockFallbacks ? "https://warren.example" : "");
+  const token = stringValue(raw.token ?? raw.access_token ?? raw.accessToken)
+    || (options.allowMockFallbacks ? "wrn_live_8KpReVeAlEdOnCe3pQ7xZ2vTn9bLw0aYsR4tH" : "");
+  if (!baseUrl || !token) return null;
+
   const model = stringValue(raw.model) || input.model || agent.model;
   const vendorRaw = raw.model_vendor ?? raw.modelVendor;
+  const endpoints = isRecord(raw.endpoints) ? raw.endpoints : {};
   const avatarUrlFallback = input.avatarPreset ? `${baseUrl}${avatarPresetPath(input.avatarPreset)}` : `${baseUrl}/assets/avatars/avatar-portrait-thinker.png`;
+  const issuedAt = raw.registered_at ?? raw.registeredAt ?? raw.issued_at ?? raw.issuedAt;
+  const registeredAt = stringValue(issuedAt)
+    || (typeof issuedAt === "number" && Number.isFinite(issuedAt) ? new Date(issuedAt).toISOString() : "")
+    || (options.allowMockFallbacks ? "2026-06-02T08:00:00.000Z" : "");
+  if (!registeredAt) return null;
 
   return {
     schema_version: numberValue(raw.schema_version ?? raw.schemaVersion, 1),
@@ -1956,10 +1939,10 @@ function credentialPackFromInput(
     model,
     model_vendor: vendorRaw ? modelVendorValue(vendorRaw) : inferModelVendor(model),
     avatar_url: stringValue(raw.avatar_url ?? raw.avatarUrl) || avatarUrlFallback,
-    token: stringValue(raw.token ?? raw.access_token ?? raw.accessToken) || "wrn_live_8KpReVeAlEdOnCe3pQ7xZ2vTn9bLw0aYsR4tH",
-    registered_at: stringValue(raw.registered_at ?? raw.registeredAt) || "2026-06-02T08:00:00.000Z",
-    llms_txt: stringValue(raw.llms_txt ?? raw.llmsTxt) || `${baseUrl}/api/public/llms.txt`,
-    skill_md: stringValue(raw.skill_md ?? raw.skillMd) || `${baseUrl}/api/public/warren-skill.md`,
+    token,
+    registered_at: registeredAt,
+    llms_txt: stringValue(raw.llms_txt ?? raw.llmsTxt ?? endpoints.llms) || `${baseUrl}/api/public/llms.txt`,
+    skill_md: stringValue(raw.skill_md ?? raw.skillMd ?? endpoints.skill) || `${baseUrl}/api/public/warren-skill.md`,
     api_docs: stringValue(raw.api_docs ?? raw.apiDocs) || `${baseUrl}/api/public/api-docs`,
   };
 }
@@ -1977,12 +1960,26 @@ function numberValue(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
+function requiredNumberValue(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
 function arrayOfStrings(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function normalizeCollection<T>(items: unknown[], normalize: (item: unknown) => T | null): T[] | null {
+  const normalized: T[] = [];
+  for (const item of items) {
+    const value = normalize(item);
+    if (!value) return null;
+    normalized.push(value);
+  }
+  return normalized;
 }
 
 function throwDebugRead(debugState: WarrenDebugState | undefined, label: string) {
@@ -1999,8 +1996,36 @@ function throwDebugMutation(debugState: WarrenDebugState | undefined, label: str
   if (debugState === "rollback") throw rollbackError(label);
 }
 
-function shouldThrowResponse(response: Response) {
-  return response.status === 429 || response.status === 403 || response.status === 401;
+function explicitMock<T>(factory: () => T): T | null {
+  return shouldUseExplicitMock() ? factory() : null;
+}
+
+function shouldUseExplicitMock() {
+  if (!import.meta.env.DEV) return false;
+  if (WARREN_USE_MOCK) return true;
+  if (typeof window === "undefined") return false;
+  return new URLSearchParams(window.location.search).get("mock") === "1";
+}
+
+async function jsonFromResponse(response: Response, fallbackMessage: string): Promise<unknown> {
+  if (!response.ok) throw await errorFromResponse(response, fallbackMessage);
+
+  try {
+    return await response.json();
+  } catch {
+    throw serverError("Warren endpoint returned invalid JSON.");
+  }
+}
+
+function requireApiData<T>(value: T | null, label: string): T {
+  if (value) return value;
+  throw serverError(`${label} returned an unexpected response.`);
+}
+
+function throwFetchError(error: unknown, label: string): never {
+  if (error instanceof DOMException && error.name === "AbortError") throw error;
+  if (isWarrenApiError(error)) throw error;
+  throw networkError(label);
 }
 
 async function errorFromResponse(response: Response, fallbackMessage: string): Promise<WarrenApiError> {
@@ -2012,8 +2037,14 @@ async function errorFromResponse(response: Response, fallbackMessage: string): P
   try {
     const data = await response.clone().json();
     if (isRecord(data)) {
-      code = stringValue(data.code ?? data.error);
-      message = stringValue(data.message) || message;
+      const rawError = data.error;
+      if (isRecord(rawError)) {
+        code = stringValue(rawError.code ?? data.code);
+        message = stringValue(rawError.message ?? data.message) || message;
+      } else {
+        code = stringValue(data.code ?? rawError);
+        message = stringValue(data.message) || message;
+      }
     }
   } catch {
     // Plain-text error bodies are optional; fallback copy is good enough for UI.
@@ -2023,6 +2054,10 @@ async function errorFromResponse(response: Response, fallbackMessage: string): P
   if (code === "agent_muted") return mutedError(message);
   if (code === "agent_banned" || response.status === 401) return bannedError(message);
   return new WarrenApiError(message, { kind: "server", status: response.status, code });
+}
+
+function networkError(label: string) {
+  return new WarrenApiError(`${label} request failed.`, { kind: "network", code: "network_error" });
 }
 
 function offlineError(label: string) {

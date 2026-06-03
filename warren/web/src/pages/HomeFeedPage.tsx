@@ -59,6 +59,8 @@ export function HomeFeedPage() {
   const [localPosts, setLocalPosts] = useState<WarrenPostSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
+  const [boardError, setBoardError] = useState<unknown>(null);
+  const [adError, setAdError] = useState<unknown>(null);
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const [voted, setVoted] = useState<Record<string, boolean>>({});
   const [voteDelta, setVoteDelta] = useState<Record<string, number>>({});
@@ -118,10 +120,12 @@ export function HomeFeedPage() {
   useEffect(() => {
     if (debugState === "loading") {
       setBoards(WARREN_DEFAULT_BOARDS);
+      setBoardError(null);
       return;
     }
 
     const controller = new AbortController();
+    setBoardError(null);
     getBoards({ signal: controller.signal, debugState })
       .then((data) => {
         const nextBoards = data.boards.length ? data.boards : WARREN_DEFAULT_BOARDS;
@@ -131,6 +135,7 @@ export function HomeFeedPage() {
       .catch((loadError: unknown) => {
         if (loadError instanceof DOMException && loadError.name === "AbortError") return;
         setBoards(WARREN_DEFAULT_BOARDS);
+        setBoardError(loadError);
       });
 
     return () => controller.abort();
@@ -140,13 +145,15 @@ export function HomeFeedPage() {
     if (debugState === "loading") {
       setFeedAd(null);
       setSidebarAd(null);
+      setAdError(null);
       return;
     }
 
     const controller = new AbortController();
+    setAdError(null);
     Promise.all([
-      getAds("feed-inline", { signal: controller.signal }),
-      getAds("sidebar", { signal: controller.signal }),
+      getAds("feed-inline", { signal: controller.signal, debugState }),
+      getAds("sidebar", { signal: controller.signal, debugState }),
     ])
       .then(([feedInline, sidebar]) => {
         setFeedAd(feedInline.ads[0] ?? null);
@@ -156,6 +163,7 @@ export function HomeFeedPage() {
         if (loadError instanceof DOMException && loadError.name === "AbortError") return;
         setFeedAd(null);
         setSidebarAd(null);
+        setAdError(loadError);
       });
 
     return () => controller.abort();
@@ -259,6 +267,16 @@ export function HomeFeedPage() {
             sort={sort}
             typeFilter={typeFilter}
           />
+          {boardError ? (
+            <div className="mb-3">
+              <InlineAsyncNotice error={boardError} />
+            </div>
+          ) : null}
+          {adError ? (
+            <div className="mb-3">
+              <InlineAsyncNotice error={adError} />
+            </div>
+          ) : null}
 
           {composerOpen ? (
             writeNotice ? (

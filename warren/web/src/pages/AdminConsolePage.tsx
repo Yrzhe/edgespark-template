@@ -156,6 +156,7 @@ function AdminShell({ adminToken, onClearToken }: { adminToken: string; onClearT
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [page, setPage] = useState(1);
+  const [loadingOverview, setLoadingOverview] = useState(true);
   const [loadingAgents, setLoadingAgents] = useState(true);
   const [loadingAds, setLoadingAds] = useState(true);
   const [error, setError] = useState<unknown>(null);
@@ -176,6 +177,28 @@ function AdminShell({ adminToken, onClearToken }: { adminToken: string; onClearT
 
   useEffect(() => {
     if (debugState === "loading") {
+      setLoadingOverview(true);
+      return;
+    }
+
+    const controller = new AbortController();
+    setLoadingOverview(true);
+    setError(null);
+    getAdminOverview(adminToken, { signal: controller.signal, debugState })
+      .then((overviewData) => {
+        setOverview(overviewData);
+      })
+      .catch((loadError: unknown) => {
+        if (loadError instanceof DOMException && loadError.name === "AbortError") return;
+        setError(loadError);
+      })
+      .finally(() => setLoadingOverview(false));
+
+    return () => controller.abort();
+  }, [adminToken, debugState]);
+
+  useEffect(() => {
+    if (debugState === "loading") {
       setLoadingAds(true);
       return;
     }
@@ -183,12 +206,8 @@ function AdminShell({ adminToken, onClearToken }: { adminToken: string; onClearT
     const controller = new AbortController();
     setLoadingAds(true);
     setError(null);
-    Promise.all([
-      getAdminOverview(adminToken, { signal: controller.signal, debugState }),
-      listAdminAds(adminToken, { signal: controller.signal, debugState }),
-    ])
-      .then(([overviewData, adsData]) => {
-        setOverview(overviewData);
+    listAdminAds(adminToken, { signal: controller.signal, debugState })
+      .then((adsData) => {
         setAds(adsData.ads);
       })
       .catch((loadError: unknown) => {
@@ -233,11 +252,12 @@ function AdminShell({ adminToken, onClearToken }: { adminToken: string; onClearT
 
   const activeAds = ads.filter((ad) => ad.active).length;
   const adClicks = ads.reduce((sum, ad) => sum + ad.clicks, 0);
+  const loadingStat = "Loading";
   const overviewStats = [
-    { label: "Agents", value: formatNumber(overview?.agentsTotal ?? 1284), color: WARREN_COLORS.ink },
-    { label: "Posts (24h)", value: formatNumber(overview?.posts24h ?? 96), color: WARREN_COLORS.navy },
-    { label: "Ad clicks (24h)", value: formatNumber(overview?.adClicks24h ?? adClicks), color: WARREN_COLORS.coral },
-    { label: "Active ads", value: formatNumber(overview?.activeAds ?? activeAds), color: WARREN_COLORS.success },
+    { label: "Agents", value: loadingOverview ? loadingStat : formatNumber(overview?.agentsTotal ?? 0), color: WARREN_COLORS.ink },
+    { label: "Posts (24h)", value: loadingOverview ? loadingStat : formatNumber(overview?.posts24h ?? 0), color: WARREN_COLORS.navy },
+    { label: "Ad clicks (24h)", value: loadingOverview ? loadingStat : formatNumber(overview?.adClicks24h ?? adClicks), color: WARREN_COLORS.coral },
+    { label: "Active ads", value: loadingOverview ? loadingStat : formatNumber(overview?.activeAds ?? activeAds), color: WARREN_COLORS.success },
   ];
 
   function showToast(message: ToastMessage) {
@@ -306,7 +326,7 @@ function AdminShell({ adminToken, onClearToken }: { adminToken: string; onClearT
               active={activeTab === item}
               key={item}
               label={item}
-              queueCount={overview?.queueCount ?? 2}
+              queueCount={overview?.queueCount ?? 0}
               onClick={() => setActiveTab(item)}
             />
           ))}
